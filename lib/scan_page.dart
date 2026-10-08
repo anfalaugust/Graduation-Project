@@ -1,5 +1,10 @@
-import 'package:flutter/material.dart';
+import 'dart:io';
 
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'services/model_service.dart';
+
+import 'settings/settings_page.dart';
 import 'theme/app_colors.dart';
 import 'widgets/app_bottom_nav.dart';
 
@@ -12,6 +17,29 @@ class ScanPage extends StatefulWidget {
 
 class _ScanPageState extends State<ScanPage> {
   bool _cameraMode = false;
+
+  // The photo the user picked from the gallery (null = no photo yet)
+  File? _selectedImage;
+
+  final ImagePicker _picker = ImagePicker();
+
+  bool _isAnalyzing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Wake the model server early so the first analysis is faster
+    ModelService.wakeUp();
+  }
+
+    Future<void> _pickImage(ImageSource source) async {
+    final XFile? picked = await _picker.pickImage(source: source);
+
+    // The user closed the gallery or camera without choosing a photo
+    if (picked == null) return;
+
+    setState(() => _selectedImage = File(picked.path));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -81,9 +109,10 @@ class _ScanPageState extends State<ScanPage> {
               ),
               const SizedBox(height: 32),
 
-              // The large preview box changes with the selected mode
+                            // The large preview box changes with the selected mode
               Container(
                 height: 340,
+                clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: _cameraMode
                       ? const Color(0xFF222222)
@@ -93,15 +122,7 @@ class _ScanPageState extends State<ScanPage> {
                       ? null
                       : Border.all(color: AppColors.forest, width: 2),
                 ),
-                child: Center(
-                  child: Icon(
-                    _cameraMode
-                        ? Icons.photo_camera_outlined
-                        : Icons.cloud_upload_outlined,
-                    size: 70,
-                    color: _cameraMode ? Colors.white : AppColors.forest,
-                  ),
-                ),
+                child: _buildPreview(),
               ),
               const SizedBox(height: 32),
 
@@ -109,7 +130,10 @@ class _ScanPageState extends State<ScanPage> {
               SizedBox(
                 height: 74,
                 child: ElevatedButton.icon(
-                  onPressed: () {},
+                                    // Open the camera or the gallery depending on the mode
+                  onPressed: () => _pickImage(
+                    _cameraMode ? ImageSource.camera : ImageSource.gallery,
+                  ),
                   icon: Icon(
                     _cameraMode
                         ? Icons.camera_alt_outlined
@@ -129,6 +153,42 @@ class _ScanPageState extends State<ScanPage> {
                 ),
               ),
               const SizedBox(height: 32),
+
+                            // Analyze button (only shown after choosing a photo)
+              if (_selectedImage != null) ...[
+                SizedBox(
+                  height: 56,
+                  child: FilledButton(
+                    onPressed: _isAnalyzing ? null : _analyzeImage,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.orange,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor:
+                          AppColors.orange.withValues(alpha: 0.6),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                    ),
+                    child: _isAnalyzing
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text(
+                            'Analyze',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                  ),
+                ),
+                const SizedBox(height: 32),
+              ],
 
               // Photo tips
               Container(
@@ -167,7 +227,78 @@ class _ScanPageState extends State<ScanPage> {
         onChatbotTap: () {},
         onFrameTap: () {},
         onHistoryTap: () {},
-        onSettingsTap: () {},
+                onSettingsTap: () {
+          // Replace Scan with Settings so pages don't stack up
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute<void>(builder: (_) => const SettingsPage()),
+          );
+        },
+      ),
+    );
+  }
+
+    Future<void> _analyzeImage() async {
+    final image = _selectedImage;
+    if (image == null) return;
+
+    setState(() => _isAnalyzing = true);
+
+    try {
+      final result = await ModelService.predict(image);
+      debugPrint('Result: ${result.diseaseName} (${result.confidenceText})');
+      if (!mounted) return;
+      // Temporary message until the result page is connected
+      _showMessage('${result.diseaseName} - ${result.confidenceText}');
+    } catch (e) {
+      // Shows the real error in the Debug Console
+      debugPrint('Analyze failed: $e');
+      if (!mounted) return;
+      _showMessage('Could not analyze the photo. Please try again.');
+    } finally {
+      if (mounted) setState(() => _isAnalyzing = false);
+    }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Widget _buildPreview() {
+       // A photo was picked or taken: show it
+    if (_selectedImage != null) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.file(_selectedImage!, fit: BoxFit.cover),
+          // Button to remove the photo
+          Positioned(
+            top: 10,
+            right: 10,
+            child: IconButton.filled(
+              onPressed: () => setState(() => _selectedImage = null),
+              icon: const Icon(Icons.close),
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.black54,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Otherwise: show the icon for the current mode
+    return Center(
+      child: Icon(
+        _cameraMode ? Icons.photo_camera_outlined : Icons.cloud_upload_outlined,
+        size: 70,
+        color: _cameraMode ? Colors.white : AppColors.forest,
       ),
     );
   }

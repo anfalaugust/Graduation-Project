@@ -64,6 +64,53 @@ class AuthService {
     );
   }
 
+    // ============================================================
+  // CURRENT USER & PROFILE
+  // ============================================================
+
+  // The logged-in user (null if nobody is logged in)
+  User? get currentUser => _auth.currentUser;
+
+  // Notifies whenever the user's profile changes (name, email, log out)
+  Stream<User?> userChanges() => _auth.userChanges();
+
+  Future<void> updateName(String name) async {
+    await _auth.currentUser?.updateDisplayName(name.trim());
+  }
+
+  // Sends a confirmation link to the new email.
+  // The email only changes after the user opens the link.
+  Future<void> updateEmail(String newEmail) async {
+    await _auth.currentUser?.verifyBeforeUpdateEmail(newEmail.trim());
+  }
+
+
+  // Checks the current password, then changes it to the new one
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final user = _auth.currentUser;
+    final email = user?.email;
+    if (user == null || email == null) {
+      throw FirebaseAuthException(code: 'no-current-user');
+    }
+
+    // Firebase asks for the current password again before changing it
+    final credential = EmailAuthProvider.credential(
+      email: email,
+      password: currentPassword,
+    );
+    await user.reauthenticateWithCredential(credential);
+    await user.updatePassword(newPassword);
+  }
+
+
+  // Permanently deletes the logged-in user's account
+  Future<void> deleteAccount() async {
+    await _auth.currentUser?.delete();
+  }
+
   // ============================================================
   // LOGOUT
   // ============================================================
@@ -103,6 +150,10 @@ class AuthService {
 
         case 'user-disabled':
           return 'This account has been disabled.';
+
+        
+        case 'requires-recent-login':
+          return 'For your security, please log out, log in again, and try once more.';
 
         default:
           return error.message ?? 'Something went wrong. Please try again.';

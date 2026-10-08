@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'scan_page.dart';
+import 'settings/settings_page.dart';
 import 'theme/app_colors.dart';
 import 'widgets/app_bottom_nav.dart';
 
@@ -90,54 +91,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  void _showDiagnosisPrompt(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: Colors.white,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Start diagnosis',
-                  style: TextStyle(fontSize: 21, fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Image upload is not enabled in this standalone preview. '
-                  'You can view one of the sample diagnoses below.',
-                  style: TextStyle(
-                    color: AppColors.mutedText,
-                    height: 1.45,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.forest,
-                      foregroundColor: Colors.white,
-                    ),
-                    onPressed: () {
-                      Navigator.pop(sheetContext);
-                      showDiagnosisDetails(context, diagnosisCases.first);
-                    },
-                    child: const Text('View sample diagnosis'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
+  
 
   @override
   Widget build(BuildContext context) {
@@ -160,7 +114,7 @@ class HomeScreen extends StatelessWidget {
                   children: [
                     HeroBanner(
                       height: bannerHeight,
-                      onDiagnoseTap: () => _showDiagnosisPrompt(context),
+                                           onDiagnoseTap: () => _openScan(context),
                     ),
                     const SizedBox(height: 26),
                     const SummaryRow(),
@@ -222,8 +176,13 @@ class HomeScreen extends StatelessWidget {
             _showMessage(context, 'Chatbot is a demo placeholder.'),
         onFrameTap: () => _openScan(context),
         onHistoryTap: () => _openDiagnosisHistory(context),
-        onSettingsTap: () =>
-            _showMessage(context, 'Settings are not available yet.'),
+        onSettingsTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const SettingsPage(),
+            ),
+          );
+        },
       ),
     );
   }
@@ -595,7 +554,7 @@ class DiagnosisHistoryPage extends StatelessWidget {
       body: ListView.separated(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
         itemCount: diagnosisCases.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 14),
+                separatorBuilder: (_, __) => const SizedBox(height: 14),
         itemBuilder: (context, index) {
           final item = diagnosisCases[index];
           return DiagnosisCard(

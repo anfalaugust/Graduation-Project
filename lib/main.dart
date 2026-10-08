@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 
 import 'create_account.dart';
 import 'forgot_password.dart';
+import 'home_page.dart';
 import 'analysis_result_screen.dart';
 import 'services/auth_service.dart';
 import 'firebase_options.dart';
@@ -373,10 +374,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (!mounted) return;
 
-      Navigator.push(
+            // Go to Home and remove Login from the back stack
+      Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) => const AnalysisResultScreen(),
+          builder: (context) => const HomeScreen(),
         ),
       );
     } catch (e) {
