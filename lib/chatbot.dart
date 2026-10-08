@@ -1,57 +1,106 @@
 import 'package:flutter/material.dart';
 
+import 'services/chat_service.dart';
+import 'theme/app_colors.dart';
+import 'widgets/app_bottom_nav.dart';
+import 'History.dart';
+import 'scan_page.dart';
+
 class ChatbotScreen extends StatefulWidget {
-  const ChatbotScreen({super.key});
+  final String? chatId;
+  final String? diseaseId;
+  final double? confidence;
+
+  const ChatbotScreen({
+    super.key,
+    this.chatId,
+    this.diseaseId,
+    this.confidence,
+  });
 
   @override
   State<ChatbotScreen> createState() => _ChatbotScreenState();
 }
 
 class _ChatbotScreenState extends State<ChatbotScreen> {
-  static const Color _bg = Color(0xFFF7F7F7);
+  // Chat-specific color with no equivalent in the shared theme.
   static const Color _bubble = Color(0xFFD9D9D9);
-  static const Color _green = Color(0xFF2F4A35);
 
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scroll = ScrollController();
-  final List<Map<String, dynamic>> _messages = [];
 
-  final List<String> _suggestions = [
+  String? _activeChatId;
+  String? _error;
+  List<ChatMessage> _messages = [];
+  bool _isTyping = false;
+
+  // Quick replies shown when the chat is opened from a scan result.
+  final List<String> _diseaseSuggestions = [
     'How can I treat this disease?',
     'How did you identify this disease?',
   ];
 
-  void _send([String? preset]) {
-    final text = (preset ?? _controller.text).trim();
-    if (text.isEmpty) return;
-    setState(() {
-      _messages.add({'text': text, 'isUser': true});
-    });
-    _controller.clear();
-    _scrollToEnd();
+  // Quick replies shown when the chat is opened from the nav bar (no scan).
+  final List<String> _generalSuggestions = [
+    'How do I keep my date palm healthy?',
+    'What are common date palm diseases?',
+  ];
 
-    // رد تجريبي من البوت (نستبدله بالربط الحقيقي لاحقاً)
-    Future.delayed(const Duration(milliseconds: 600), () {
-      if (!mounted) return;
-      setState(() {
-        _messages.add({'text': _fakeReply(text), 'isUser': false});
-      });
-      _scrollToEnd();
+  @override
+  void initState() {
+    super.initState();
+    _activeChatId = widget.chatId;
+    if (_activeChatId == null) _startChat();
+  }
+
+  // Creates a new chat session. Fails after 15 seconds instead of spinning forever.
+  void _startChat() {
+    setState(() => _error = null);
+    ChatService.startChat(
+      diseaseId: widget.diseaseId,
+      title: widget.diseaseId != null ? 'Scan Question' : 'New Chat',
+    ).timeout(const Duration(seconds: 15)).then((id) {
+      if (mounted) setState(() => _activeChatId = id);
+    }).catchError((e) {
+      debugPrint('startChat failed: $e');
+      if (mounted) setState(() => _error = e.toString());
     });
   }
 
-  String _fakeReply(String question) {
-    if (question == 'How can I treat this disease?') {
-      return 'Black Scorch Treatment:\n\n'
-          '✂️ Prune: Cut & burn infected fronds.\n'
-          '🧴 Spray: Apply copper-based fungicide.\n'
-          '🧽 Disinfect: Sterilize pruning tools.\n'
-          '💧 Dry: Keep the palm crown dry.';
+  // Sends a message (typed or from a quick reply) and waits for the bot reply.
+  Future<void> _send([String? preset]) async {
+    final text = (preset ?? _controller.text).trim();
+    if (text.isEmpty || _activeChatId == null) return;
+
+    _controller.clear();
+    setState(() => _isTyping = true);
+    _scrollToEnd();
+
+    try {
+      await ChatService.send(
+        chatId: _activeChatId!,
+        history: _messages,
+        userText: text,
+        diseaseId: widget.diseaseId,
+        confidence: widget.confidence,
+        language: 'en', // Use 'ar' for Arabic replies.
+      ).timeout(const Duration(seconds: 45));
+    } catch (e) {
+      debugPrint('send failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to send: $e'),
+            duration: const Duration(seconds: 10),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isTyping = false);
+        _scrollToEnd();
+      }
     }
-    if (question == 'How did you identify this disease?') {
-      return 'Here is how the model detected the disease symptoms.';
-    }
-    return 'شكراً لسؤالك! سأرد عليك قريباً.';
   }
 
   void _scrollToEnd() {
@@ -84,7 +133,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
           color: Color(0xFFEDEDED),
           shape: BoxShape.circle,
         ),
-        child: Icon(icon, size: 20, color: Colors.black87),
+        child: Icon(icon, size: 20, color: AppColors.textDark),
       ),
     );
   }
@@ -96,7 +145,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
       decoration: const BoxDecoration(
         shape: BoxShape.circle,
         gradient: LinearGradient(
-          colors: [Color(0xFF6E8B72), Color(0xFFB08A5A)],
+          colors: [AppColors.leafGreen, AppColors.orange],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -110,16 +159,20 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
       height: 40,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.black87),
+        border: Border.all(color: AppColors.textDark),
       ),
-      child: const Icon(Icons.person_outline, color: _green),
+      child: const Icon(Icons.person_outline, color: AppColors.forest),
     );
   }
 
+  // Welcome view shown while the message list is empty.
   Widget _welcome() {
+    final suggestions =
+        widget.diseaseId != null ? _diseaseSuggestions : _generalSuggestions;
+
     return LayoutBuilder(
       builder: (context, constraints) {
-        // حجم الدائرة يتكيف مع ارتفاع الشاشة
+        // The avatar shrinks on short screens so nothing gets clipped.
         final avatarSize =
             (constraints.maxHeight * 0.32).clamp(100.0, 190.0);
         return Column(
@@ -128,12 +181,12 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
             _botAvatar(size: avatarSize),
             const SizedBox(height: 12),
             const Text('Hello',
-                style: TextStyle(fontSize: 20, color: Colors.black38)),
+                style: TextStyle(fontSize: 20, color: AppColors.navInactive)),
             const SizedBox(height: 8),
-            const Text('How can i help you ?',
-                style: TextStyle(fontSize: 20, color: Colors.black)),
+            const Text('How can I help you?',
+                style: TextStyle(fontSize: 20, color: AppColors.textDark)),
             const Spacer(flex: 3),
-            ..._suggestions.map(
+            ...suggestions.map(
               (s) => Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
@@ -141,8 +194,8 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                   child: OutlinedButton(
                     onPressed: () => _send(s),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.black,
-                      side: const BorderSide(color: Colors.black),
+                      foregroundColor: AppColors.textDark,
+                      side: const BorderSide(color: AppColors.textDark),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(24),
                       ),
@@ -161,24 +214,37 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     );
   }
 
+  // Conversation view: user bubbles on the right, bot bubbles on the left.
   Widget _messageList() {
     return ListView.builder(
       controller: _scroll,
       padding: const EdgeInsets.all(16),
-      itemCount: _messages.length,
+      itemCount: _messages.length + (_isTyping ? 1 : 0),
       itemBuilder: (context, i) {
+        // Last item is the typing indicator while waiting for a reply.
+        if (i == _messages.length) {
+          return _buildTypingIndicator();
+        }
+
         final m = _messages[i];
-        final isUser = m['isUser'] as bool;
+        final isUser = m.isUser;
         final bubble = Flexible(
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: _bubble,
+              color: isUser ? AppColors.forest : _bubble,
               borderRadius: BorderRadius.circular(16),
             ),
-            child: Text(m['text'], style: const TextStyle(fontSize: 14)),
+            child: Text(
+              m.text,
+              style: TextStyle(
+                fontSize: 14,
+                color: isUser ? Colors.white : AppColors.textDark,
+              ),
+            ),
           ),
         );
+
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Row(
@@ -194,6 +260,33 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     );
   }
 
+  Widget _buildTypingIndicator() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _botAvatar(),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: _bubble,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Text(
+              'Sa\'af AI is thinking...',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontStyle: FontStyle.italic,
+                  color: AppColors.mutedText),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _inputField() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
@@ -201,22 +294,47 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
         controller: _controller,
         onSubmitted: (_) => _send(),
         decoration: InputDecoration(
-          hintText: 'Ask PlamCare AI...',
-          hintStyle: const TextStyle(color: Colors.black38),
+          hintText: 'Ask Sa\'af AI...',
+          hintStyle: const TextStyle(color: AppColors.navInactive),
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
           suffixIcon: IconButton(
-            icon: const Icon(Icons.send, color: _green),
+            icon: const Icon(Icons.send, color: AppColors.forest),
             onPressed: () => _send(),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Colors.black87),
+            borderSide: const BorderSide(color: AppColors.textDark),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: _green, width: 1.5),
+            borderSide: const BorderSide(color: AppColors.forest, width: 1.5),
           ),
+        ),
+      ),
+    );
+  }
+
+  // Shown when the chat session could not be created.
+  Widget _errorView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Could not open the chat',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 12),
+            Text(_error ?? '',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppColors.mutedText)),
+            const SizedBox(height: 16),
+            OutlinedButton(
+              onPressed: _startChat,
+              child: const Text('Try again'),
+            ),
+          ],
         ),
       ),
     );
@@ -224,10 +342,12 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final keyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
+
     return Directionality(
       textDirection: TextDirection.ltr,
       child: Scaffold(
-        backgroundColor: _bg,
+        backgroundColor: AppColors.background,
         body: SafeArea(
           child: Column(
             children: [
@@ -244,12 +364,53 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                 ),
               ),
               Expanded(
-                child: _messages.isEmpty ? _welcome() : _messageList(),
+                child: _error != null
+                    ? _errorView()
+                    : _activeChatId == null
+                        ? const Center(child: CircularProgressIndicator())
+                        : StreamBuilder<List<ChatMessage>>(
+                            stream: ChatService.messagesStream(_activeChatId!),
+                            builder: (context, snapshot) {
+                              if (snapshot.hasError) {
+                                return Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(24),
+                                    child: Text(
+                                        'Could not load messages:\n${snapshot.error}',
+                                        textAlign: TextAlign.center),
+                                  ),
+                                );
+                              }
+                              _messages = snapshot.data ?? [];
+                              if (_messages.isEmpty && !_isTyping) {
+                                return _welcome();
+                              }
+                              return _messageList();
+                            },
+                          ),
               ),
               _inputField(),
             ],
           ),
         ),
+        // The nav bar is hidden while the keyboard is open so it does not
+        // take space from the text field.
+        bottomNavigationBar: keyboardOpen
+            ? null
+            : AppBottomNavigationBar(
+                current: NavTab.chatbot,
+                onHomeTap: () =>
+                    Navigator.of(context).popUntil((r) => r.isFirst),
+                onChatbotTap: () {},
+                onFrameTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const ScanPage()),
+                ),
+                onHistoryTap: () => Navigator.of(context).pushReplacement(
+                  MaterialPageRoute<void>(
+                      builder: (_) => const HistoryScreen()),
+                ),
+                onSettingsTap: () {},
+              ),
       ),
     );
   }

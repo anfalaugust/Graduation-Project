@@ -147,7 +147,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'model_service.dart';
 
 /// Change this if Firebase says the model is not available.
-const String geminiModel = 'gemini-2.5-flash';
+const String geminiModel = 'gemini-3.8-flash';
 
 class ChatMessage {
   final String sender;        // "user" or "bot"
@@ -312,13 +312,14 @@ class ChatService {
   }
 
   static Future<void> _saveMessage(String chatId, String sender, String text, {String imageUrl = ''}) async {
-    final chat = _chats.doc(chatId);
-    await chat.collection('messages').add({
-      'sender': sender,
-      'text': text,
-      'imageUrl': imageUrl,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
-    await chat.update({'lastMessageAt': FieldValue.serverTimestamp()});
-  }
+  final chat = _chats.doc(chatId);
+  await chat.collection('messages').add({
+    'sender': sender,
+    'fromUser': sender == 'user',
+    'text': text,
+    'createdAt': FieldValue.serverTimestamp(),
+    if (imageUrl.isNotEmpty) 'imageUrl': imageUrl,
+  });
+  await chat.update({'lastMessageAt': FieldValue.serverTimestamp()});
+}
 }

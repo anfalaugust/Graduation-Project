@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
 import 'scan_page.dart';
-import 'settings/settings_page.dart';
 import 'theme/app_colors.dart';
 import 'widgets/app_bottom_nav.dart';
+import 'chatbot.dart';
+import 'History.dart';
 
 enum ThumbnailKind {
   blackScorch,
@@ -75,13 +76,13 @@ class HomeScreen extends StatelessWidget {
       );
   }
 
-  void _openDiagnosisHistory(BuildContext context) {
+   void _openDiagnosisHistory(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => const DiagnosisHistoryPage(),
+        builder: (_) => const HistoryScreen(),
       ),
     );
-  }
+   }
 
   void _openScan(BuildContext context) {
     Navigator.of(context).push(
@@ -91,7 +92,54 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  
+  void _showDiagnosisPrompt(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Start diagnosis',
+                  style: TextStyle(fontSize: 21, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Image upload is not enabled in this standalone preview. '
+                  'You can view one of the sample diagnoses below.',
+                  style: TextStyle(
+                    color: AppColors.mutedText,
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.forest,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: () {
+                      Navigator.pop(sheetContext);
+                      showDiagnosisDetails(context, diagnosisCases.first);
+                    },
+                    child: const Text('View sample diagnosis'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -114,7 +162,7 @@ class HomeScreen extends StatelessWidget {
                   children: [
                     HeroBanner(
                       height: bannerHeight,
-                                           onDiagnoseTap: () => _openScan(context),
+                      onDiagnoseTap: () => _showDiagnosisPrompt(context),
                     ),
                     const SizedBox(height: 26),
                     const SummaryRow(),
@@ -172,17 +220,14 @@ class HomeScreen extends StatelessWidget {
       bottomNavigationBar: AppBottomNavigationBar(
         current: NavTab.home,
         onHomeTap: () {},
-        onChatbotTap: () =>
-            _showMessage(context, 'Chatbot is a demo placeholder.'),
+        onChatbotTap: () =>  Navigator.of(context).push(
+
+              MaterialPageRoute<void>(builder: (_) => const ChatbotScreen()),
+         ),
         onFrameTap: () => _openScan(context),
         onHistoryTap: () => _openDiagnosisHistory(context),
-        onSettingsTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => const SettingsPage(),
-            ),
-          );
-        },
+        onSettingsTap: () =>
+            _showMessage(context, 'Settings are not available yet.'),
       ),
     );
   }
@@ -554,7 +599,7 @@ class DiagnosisHistoryPage extends StatelessWidget {
       body: ListView.separated(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
         itemCount: diagnosisCases.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 14),
+        separatorBuilder: (_, __) => const SizedBox(height: 14),
         itemBuilder: (context, index) {
           final item = diagnosisCases[index];
           return DiagnosisCard(
@@ -715,9 +760,8 @@ class ThumbnailPainter extends CustomPainter {
         canvas.drawPath(
           path,
           Paint()
-            ..color = i.isEven
-                ? const Color(0xFF244D31)
-                : const Color(0xFF91B270)
+            ..color =
+                i.isEven ? const Color(0xFF244D31) : const Color(0xFF91B270)
             ..style = PaintingStyle.stroke
             ..strokeWidth = 4
             ..strokeCap = StrokeCap.round,
@@ -736,9 +780,8 @@ class ThumbnailPainter extends CustomPainter {
           Offset(size.width * (i * 0.20), size.height),
           Offset(size.width * (i * 0.20 + 0.85), 0),
           Paint()
-            ..color = i.isEven
-                ? const Color(0xFF405431)
-                : const Color(0xFFB18441)
+            ..color =
+                i.isEven ? const Color(0xFF405431) : const Color(0xFFB18441)
             ..strokeWidth = 3,
         );
       }
