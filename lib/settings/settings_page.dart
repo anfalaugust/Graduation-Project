@@ -118,8 +118,7 @@ class SettingsPage extends StatelessWidget {
                       if (!confirmed || !context.mounted) return;
 
                       try {
-                        // TODO: delete the user's scans from Firestore first,
-                        // once History saves them (needs the user to be logged in)
+                        
                         await AuthService().deleteAccount();
                         if (!context.mounted) return;
                         _goToLogin(context);
