@@ -74,8 +74,16 @@ class AuthService {
   // Notifies whenever the user's profile changes (name, email, log out)
   Stream<User?> userChanges() => _auth.userChanges();
 
-  Future<void> updateName(String name) async {
-    await _auth.currentUser?.updateDisplayName(name.trim());
+    Future<void> updateName(String name) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    await user.updateDisplayName(name.trim());
+
+    // Also update the name saved in Firestore.
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .set({'fullName': name.trim()}, SetOptions(merge: true));
   }
 
   // Sends a confirmation link to the new email.

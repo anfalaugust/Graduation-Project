@@ -110,6 +110,14 @@ class AnalysisResultScreen extends StatelessWidget {
       'regionUrl': regionUrl,
     });
 
+
+    // Keep the counters on the user document up to date.
+    await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+      'totalScans': FieldValue.increment(1),
+      (result.isHealthy ? 'healthyCount' : 'diseasedCount'):
+          FieldValue.increment(1),
+    }, SetOptions(merge: true));
+
     // 10. Navigate to History after successful save.
     if (!context.mounted) return;
 
@@ -449,20 +457,24 @@ class AnalysisResultScreen extends StatelessWidget {
                       icon: Icons.info_outline,
                     ),
                     const SizedBox(height: 12),
-                    Text(
-                      isHealthy
-                          ? 'The model classified this image as a healthy '
-                              'date palm leaf. Continue monitoring the palm '
-                              'and scan it again if you notice any changes.'
-                          : 'The AI model identified ${result.diseaseName} '
-                              'in the submitted image. Review the palm '
-                              'carefully and seek expert assessment to '
-                              'confirm the diagnosis.',
-                      style: const TextStyle(
-                        color: textGrey,
-                        fontSize: 11,
-                        height: 1.55,
-                      ),
+                                        _DiseaseInfo(
+                      diseaseId: result.diseaseId,
+                      builder: (d) {
+                        final description =
+                            (d['description'] ?? '').toString();
+                        return Text(
+                          description.isNotEmpty
+                              ? description
+                              : isHealthy
+                                  ? 'The model classified this image as a healthy date palm leaf. Continue monitoring the palm and scan it again if you notice any changes.'
+                                  : 'The AI model identified ${result.diseaseName} in the submitted image. Review the palm carefully and seek expert assessment to confirm the diagnosis.',
+                          style: const TextStyle(
+                            color: textGrey,
+                            fontSize: 11,
+                            height: 1.55,
+                          ),
+                        );
+                      },
                     ),
                     const SizedBox(height: 18),
                     const Text(
@@ -535,19 +547,41 @@ class AnalysisResultScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Text(
-                      isHealthy
-                          ? 'No disease was identified by the model in this '
-                              'image. Keep following good agricultural '
-                              'practices and monitor new leaf growth.'
-                          : 'The potential effects depend on the disease '
-                              'and its severity. Monitor affected leaves '
-                              'and other parts of the palm for changes.',
-                      style: const TextStyle(
-                        color: textGrey,
-                        fontSize: 11,
-                        height: 1.55,
-                      ),
+                                        _DiseaseInfo(
+                      diseaseId: result.diseaseId,
+                      builder: (d) {
+                        final symptoms = _diseaseList(d['symptoms']);
+                        if (symptoms.isEmpty) {
+                          return Text(
+                            isHealthy
+                                ? 'No disease was identified by the model in this image. Keep following good agricultural practices and monitor new leaf growth.'
+                                : 'The potential effects depend on the disease and its severity. Monitor affected leaves and other parts of the palm for changes.',
+                            style: const TextStyle(
+                              color: textGrey,
+                              fontSize: 11,
+                              height: 1.55,
+                            ),
+                          );
+                        }
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: symptoms
+                              .map(
+                                (s) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 6),
+                                  child: Text(
+                                    '•  $s',
+                                    style: const TextStyle(
+                                      color: textGrey,
+                                      fontSize: 11,
+                                      height: 1.55,
+                                    ),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -569,26 +603,27 @@ class AnalysisResultScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    _NumberedItem(
-                      number: '1',
-                      text: 'Inspect the palm leaves regularly.',
-                    ),
-                    _NumberedItem(
-                      number: '2',
-                      text: 'Take clear photos of any suspicious areas.',
-                    ),
-                    _NumberedItem(
-                      number: '3',
-                      text: 'Maintain appropriate irrigation and care.',
-                    ),
-                    _NumberedItem(
-                      number: '4',
-                      text: 'Seek agricultural expert advice if symptoms '
-                          'persist or spread.',
-                    ),
-                    _NumberedItem(
-                      number: '5',
-                      text: 'Scan the palm again to monitor changes.',
+                                        _DiseaseInfo(
+                      diseaseId: result.diseaseId,
+                      builder: (d) {
+                        final steps = _diseaseList(d['treatment']);
+                        final items = steps.isNotEmpty
+                            ? steps
+                            : const [
+                                'Inspect the palm leaves regularly.',
+                                'Take clear photos of any suspicious areas.',
+                                'Maintain appropriate irrigation and care.',
+                                'Seek agricultural expert advice if symptoms persist or spread.',
+                                'Scan the palm again to monitor changes.',
+                              ];
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (var i = 0; i < items.length; i++)
+                              _NumberedItem(number: '${i + 1}', text: items[i]),
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 12),
                     Container(
@@ -959,6 +994,53 @@ class _CircleIconButton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ============================================================
+// DISEASE INFO from Firestore: diseases/{diseaseId}
+// ============================================================
+
+final Map<String, Future<Map<String, dynamic>>> _diseaseCache = {};
+
+Future<Map<String, dynamic>> _loadDisease(String id) {
+  return _diseaseCache.putIfAbsent(id, () async {
+    if (id.isEmpty) return <String, dynamic>{};
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('diseases')
+          .doc(id)
+          .get();
+      return doc.data() ?? <String, dynamic>{};
+    } catch (_) {
+      return <String, dynamic>{};
+    }
+  });
+}
+
+/// Turns a Firestore list into clean items. Also handles lists that were
+/// saved as one long text like "Item A · 1: Item B · 2: Item C".
+List<String> _diseaseList(dynamic value) {
+  final raw =
+      value is List ? value.map((e) => e.toString()) : const <String>[];
+  return raw
+      .expand((s) => s.split('·'))
+      .map((s) => s.replaceFirst(RegExp(r'^\s*\d+\s*:\s*'), '').trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
+}
+
+class _DiseaseInfo extends StatelessWidget {
+  const _DiseaseInfo({required this.diseaseId, required this.builder});
+  final String diseaseId;
+  final Widget Function(Map<String, dynamic> disease) builder;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: _loadDisease(diseaseId),
+      builder: (context, snapshot) => builder(snapshot.data ?? const {}),
     );
   }
 }

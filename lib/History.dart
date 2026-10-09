@@ -81,7 +81,19 @@ class HistoryRepository {
     }
   }
 
-  Future<void> deleteScan(String id) => _scans.doc(id).delete();
+    Future<void> deleteScan(String id) async {
+    final doc = await _scans.doc(id).get();
+    final isHealthy =
+        (doc.data()?['status'] ?? '').toString().toLowerCase() == 'healthy';
+    await _scans.doc(id).delete();
+
+    // Keep the counters on the user document up to date.
+    await _scans.parent!.set({
+      'totalScans': FieldValue.increment(-1),
+      (isHealthy ? 'healthyCount' : 'diseasedCount'):
+          FieldValue.increment(-1),
+    }, SetOptions(merge: true));
+  }
 
   /// Scores are stored as 0..1 in Firestore; the UI uses 0..100.
   double _pct(dynamic v) {
