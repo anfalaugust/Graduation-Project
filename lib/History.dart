@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -80,7 +81,19 @@ class HistoryRepository {
     }
   }
 
-  Future<void> deleteScan(String id) => _scans.doc(id).delete();
+    Future<void> deleteScan(String id) async {
+    final doc = await _scans.doc(id).get();
+    final isHealthy =
+        (doc.data()?['status'] ?? '').toString().toLowerCase() == 'healthy';
+    await _scans.doc(id).delete();
+
+    // Keep the counters on the user document up to date.
+    await _scans.parent!.set({
+      'totalScans': FieldValue.increment(-1),
+      (isHealthy ? 'healthyCount' : 'diseasedCount'):
+          FieldValue.increment(-1),
+    }, SetOptions(merge: true));
+  }
 
   /// Scores are stored as 0..1 in Firestore; the UI uses 0..100.
   double _pct(dynamic v) {
@@ -91,7 +104,7 @@ class HistoryRepository {
   /// Ignores empty or placeholder URLs such as "https://".
   String? _url(dynamic v) {
     final s = (v ?? '').toString();
-    return (s.startsWith('http') && s.length > 8) ? s : null;
+    return ((s.startsWith('http') || s.startsWith('data:')) && s.length > 8) ? s : null;
   }
 
   /// Reads the disease description from diseases/{diseaseId} (cached).
@@ -225,10 +238,13 @@ class ScanImage extends StatelessWidget {
   Widget build(BuildContext context) {
     final u = url;
     Widget content;
-    if (u == null || u.isEmpty) {
-      content = _placeholder();
-    } else if (u.startsWith('http')) {
-      content = Image.network(u,
+           if (u == null || u.isEmpty) {
+         content = _placeholder();
+       } else if (u.startsWith('data:')) {
+         content = Image.memory(base64Decode(u.split(',').last),
+             fit: BoxFit.cover, errorBuilder: (_, __, ___) => _placeholder());
+       } else if (u.startsWith('http')) {
+         content = Image.network(u,
           fit: BoxFit.cover, errorBuilder: (_, __, ___) => _placeholder());
     } else {
       content = Image.asset(u,
@@ -664,18 +680,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         // in the search field) so it does not take space.
         bottomNavigationBar: keyboardOpen
             ? null
-            : AppBottomNavigationBar(
-                current: NavTab.history,
-                onHomeTap: () =>
-                    Navigator.of(context).popUntil((r) => r.isFirst),
-                onChatbotTap: () => Navigator.of(context).pushReplacement(
-                  MaterialPageRoute<void>(
-                      builder: (_) => const ChatbotScreen()),
-                ),
-                onFrameTap: _openScan,
-                onHistoryTap: () {},
-                onSettingsTap: () {},
-              ),
+            : const AppBottomNavigationBar(current: NavTab.history),
       ),
     );
   }
@@ -763,12 +768,40 @@ class ScanDetailsScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ScanImage(
-                        url: r.imageUrl,
-                        isHealthy: r.isHealthy,
-                        width: double.infinity,
-                        height: 170,
-                        radius: 14,
+                                            GestureDetector(
+                        onTap: () {
+                          final url = r.imageUrl;
+                          if (url == null) return;
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => FullImageViewer(url: url),
+                            ),
+                          );
+                        },
+                        child: Stack(
+                          children: [
+                            ScanImage(
+                              url: r.imageUrl,
+                              isHealthy: r.isHealthy,
+                              width: double.infinity,
+                              height: 170,
+                              radius: 14,
+                            ),
+                            Positioned(
+                              right: 8,
+                              bottom: 8,
+                              child: Container(
+                                padding: const EdgeInsets.all(5),
+                                decoration: BoxDecoration(
+                                  color: Colors.black45,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(Icons.zoom_out_map,
+                                    color: Colors.white, size: 16),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                       const SizedBox(height: 14),
                       Container(
@@ -1060,14 +1093,40 @@ class _XaiExplanationScreenState extends State<XaiExplanationScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ScanImage(
-                        url: imageUrl,
-                        isHealthy: r.isHealthy,
-                        width: double.infinity,
-                        height: 170,
-                        radius: 14,
+                                            GestureDetector(
+                        onTap: () {
+                          if (imageUrl == null) return;
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => FullImageViewer(url: imageUrl),
+                            ),
+                          );
+                        },
+                        child: Stack(
+                          children: [
+                            ScanImage(
+                              url: imageUrl,
+                              isHealthy: r.isHealthy,
+                              width: double.infinity,
+                              height: 170,
+                              radius: 14,
+                            ),
+                            Positioned(
+                              right: 8,
+                              bottom: 8,
+                              child: Container(
+                                padding: const EdgeInsets.all(5),
+                                decoration: BoxDecoration(
+                                  color: Colors.black45,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(Icons.zoom_out_map,
+                                    color: Colors.white, size: 16),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 12),
                       Row(
                         children: [
                           _toggle(),
@@ -1144,6 +1203,42 @@ class _XaiExplanationScreenState extends State<XaiExplanationScreen> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// FULL-SCREEN IMAGE VIEWER (tap an XAI image to open it)
+// ============================================================
+
+class FullImageViewer extends StatelessWidget {
+  const FullImageViewer({super.key, required this.url});
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget image = url.startsWith('data:')
+        ? Image.memory(base64Decode(url.split(',').last), fit: BoxFit.contain)
+        : Image.network(url, fit: BoxFit.contain);
+
+        return Scaffold(
+      backgroundColor: Colors.white,
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        foregroundColor: AppColors.textDark,
+        elevation: 0,
+        title: const Text('Pinch to zoom', style: TextStyle(fontSize: 14)),
+      ),
+      body: SizedBox.expand(
+        child: InteractiveViewer(
+          minScale: 1,
+          maxScale: 5,
+            child: Center(
+     child: SizedBox(width: double.infinity, child: image),
+   ),
         ),
       ),
     );

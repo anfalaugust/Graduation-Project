@@ -206,6 +206,17 @@ class ChatService {
         .map((s) => s.docs.map(ChatMessage.fromDoc).toList());
   }
 
+     /// Live list of the user's previous chats (only ones with messages),
+     /// newest first.
+     static Stream<List<Map<String, dynamic>>> chatsStream() {
+       return _chats
+           .orderBy('lastMessageAt', descending: true)
+           .snapshots()
+           .map((s) => s.docs
+               .map((d) => {'id': d.id, ...d.data()})
+               .where((c) => c['hasMessages'] == true)
+               .toList());
+     }
   // ------------------------------------------------------------ messaging
   /// Saves the user's message, asks Gemini, saves and returns the bot reply.
   static Future<ChatMessage> send({
@@ -217,7 +228,15 @@ class ChatService {
     String language = 'en',
   }) async {
     await _saveMessage(chatId, 'user', userText);
-
+    
+       // The first message becomes the chat title, and marks the chat
+       // as non-empty so it shows in the "previous chats" list.
+       if (history.isEmpty) {
+         final title = userText.length > 40
+             ? '${userText.substring(0, 40)}...'
+             : userText;
+         await _chats.doc(chatId).update({'title': title, 'hasMessages': true});
+       }
     String replyText;
     try {
       final systemPrompt = await _buildSystemPrompt(diseaseId, confidence, language);
@@ -225,7 +244,7 @@ class ChatService {
       final model = FirebaseAI.googleAI().generativeModel(
         model: geminiModel,
         systemInstruction: Content.system(systemPrompt),
-        generationConfig: GenerationConfig(temperature: 0.3, maxOutputTokens: 600),
+        generationConfig: GenerationConfig(temperature: 0.3, maxOutputTokens: 2048),
       );
 
       // previous messages (last 12) so the bot remembers the conversation
@@ -237,8 +256,22 @@ class ChatService {
             .toList(),
       );
 
-      final response = await chat.sendMessage(Content.text(userText));
-      replyText = (response.text ?? '').trim();
+               // Gemini is sometimes busy (error 500/503). Try up to 3 times,
+         // waiting a little longer each time, before giving up.
+         GenerateContentResponse? response;
+         for (var attempt = 1; attempt <= 3; attempt++) {
+           try {
+             response = await chat.sendMessage(Content.text(userText));
+             break;
+           } catch (e) {
+             final err = e.toString().toLowerCase();
+             final busy = err.contains('high demand') || err.contains('500') ||
+                 err.contains('503') || err.contains('unavailable');
+             if (!busy || attempt == 3) rethrow;
+             await Future.delayed(Duration(seconds: 2 * attempt));
+           }
+         }
+         replyText = (response?.text ?? '').trim();
       if (replyText.isEmpty) {
         replyText = 'Sorry, I couldn\'t answer that. Please try asking in a different way.';
       }
@@ -248,6 +281,9 @@ class ChatService {
         replyText = 'I\'m getting a lot of questions right now. Please wait a minute and try again.';
       } else if (msg.contains('network') || msg.contains('socket')) {
         replyText = 'I couldn\'t connect. Please check your internet and try again.';
+                 } else if (msg.contains('high demand') || msg.contains('500') ||
+             msg.contains('503') || msg.contains('unavailable')) {
+           replyText = 'Sa\'af AI is busy right now. Please try again in a moment.';
       } else {
         replyText = 'Sorry, something went wrong. Please try again.';
         // ignore: avoid_print
@@ -276,7 +312,7 @@ class ChatService {
       'safe palm-care advice and suggest consulting an agricultural specialist.',
       'If the user asks about something unrelated to date palms, politely say you',
       'can only help with date palm health.',
-      'Reply in $lang. Keep answers short (under 120 words) and use bullet points for steps.',
+      'Reply in $lang. Keep answers short (under 120 words). Use plain text only: no Markdown, no ** and no #. For steps, start each line with "• ".',
       'If the user asks how the disease was identified, explain that a hybrid AI model',
       '(EfficientNetV2-S + Swin Transformer) analysed the leaf photo, and the heatmap',
       'shows the areas it focused on.',

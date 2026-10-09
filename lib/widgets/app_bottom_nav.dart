@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../History.dart';
+import '../chatbot.dart';
+import '../scan_page.dart';
+import '../settings/settings_page.dart';
 import '../theme/app_colors.dart';
 
 enum NavTab { home, chatbot, scan, history, settings }
@@ -8,19 +12,39 @@ class AppBottomNavigationBar extends StatelessWidget {
   const AppBottomNavigationBar({
     super.key,
     required this.current,
-    required this.onHomeTap,
-    required this.onChatbotTap,
-    required this.onFrameTap,
-    required this.onHistoryTap,
-    required this.onSettingsTap,
+    this.onHomeTap,
+    this.onChatbotTap,
+    this.onFrameTap,
+    this.onHistoryTap,
+    this.onSettingsTap,
   });
 
   final NavTab current;
-  final VoidCallback onHomeTap;
-  final VoidCallback onChatbotTap;
-  final VoidCallback onFrameTap;
-  final VoidCallback onHistoryTap;
-  final VoidCallback onSettingsTap;
+  // Optional: if a page does not pass its own action, the default
+  // navigation below (_goTo) is used for that tab.
+  final VoidCallback? onHomeTap;
+  final VoidCallback? onChatbotTap;
+  final VoidCallback? onFrameTap;
+  final VoidCallback? onHistoryTap;
+  final VoidCallback? onSettingsTap;
+
+  /// Shared navigation for every page: go back to Home (the first page),
+  /// then open the chosen tab on top of it. Back from any tab returns Home.
+  void _goTo(BuildContext context, NavTab tab) {
+    if (tab == current) return;
+    final navigator = Navigator.of(context);
+    navigator.popUntil((route) => route.isFirst);
+    final Widget? page = switch (tab) {
+      NavTab.home => null,
+      NavTab.chatbot => const ChatbotScreen(),
+      NavTab.scan => const ScanPage(),
+      NavTab.history => const HistoryScreen(),
+      NavTab.settings => const SettingsPage(),
+    };
+    if (page != null) {
+      navigator.push(MaterialPageRoute<void>(builder: (_) => page));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -49,7 +73,7 @@ class AppBottomNavigationBar extends StatelessWidget {
                   icon: Icons.home_outlined,
                   label: 'Home',
                   isSelected: current == NavTab.home,
-                  onTap: onHomeTap,
+                  onTap: onHomeTap ?? (() => _goTo(context, NavTab.home)),
                 ),
               ),
               Expanded(
@@ -57,13 +81,13 @@ class AppBottomNavigationBar extends StatelessWidget {
                   icon: Icons.forum,
                   label: 'Chatbot',
                   isSelected: current == NavTab.chatbot,
-                  onTap: onChatbotTap,
+                  onTap: onChatbotTap ?? (() => _goTo(context, NavTab.chatbot)),
                 ),
               ),
               Expanded(
                 child: Center(
                   child: InkWell(
-                    onTap: onFrameTap,
+                    onTap: onFrameTap ?? (() => _goTo(context, NavTab.scan)),
                     customBorder: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(18),
                     ),
@@ -84,7 +108,7 @@ class AppBottomNavigationBar extends StatelessWidget {
                   icon: Icons.history,
                   label: 'History',
                   isSelected: current == NavTab.history,
-                  onTap: onHistoryTap,
+                  onTap: onHistoryTap ?? (() => _goTo(context, NavTab.history)),
                 ),
               ),
               Expanded(
@@ -92,7 +116,7 @@ class AppBottomNavigationBar extends StatelessWidget {
                   icon: Icons.settings,
                   label: 'Settings',
                   isSelected: current == NavTab.settings,
-                  onTap: onSettingsTap,
+                  onTap: onSettingsTap ?? (() => _goTo(context, NavTab.settings)),
                 ),
               ),
             ],

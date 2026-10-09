@@ -2,7 +2,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../main.dart' show LoginScreen;
-import '../scan_page.dart';
 import '../services/auth_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/app_bottom_nav.dart';
@@ -118,8 +117,7 @@ class SettingsPage extends StatelessWidget {
                       if (!confirmed || !context.mounted) return;
 
                       try {
-                        // TODO: delete the user's scans from Firestore first,
-                        // once History saves them (needs the user to be logged in)
+                        
                         await AuthService().deleteAccount();
                         if (!context.mounted) return;
                         _goToLogin(context);
@@ -140,20 +138,7 @@ class SettingsPage extends StatelessWidget {
           ],
         ),
       ),
-      bottomNavigationBar: AppBottomNavigationBar(
-        current: NavTab.settings,
-        onHomeTap: () => Navigator.pop(context),
-        onChatbotTap: () {},
-        onFrameTap: () {
-          // Replace Settings with Scan so pages don't stack up
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute<void>(builder: (_) => const ScanPage()),
-          );
-        },
-        onHistoryTap: () {},
-        onSettingsTap: () {},
-      ),
+      bottomNavigationBar: const AppBottomNavigationBar(current: NavTab.settings),
     );
   }
 }

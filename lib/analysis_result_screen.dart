@@ -1,12 +1,13 @@
 import 'dart:io';
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:image/image.dart' as img;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'chatbot.dart';
 import 'scan_page.dart';
 import 'services/model_service.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'History.dart';
 
 class AnalysisResultScreen extends StatelessWidget {
@@ -56,8 +57,6 @@ class AnalysisResultScreen extends StatelessWidget {
 
     final scanDoc = scans.doc();
 
-    final storage = FirebaseStorage.instance;
-    final basePath = 'users/${user.uid}/scans/${scanDoc.id}';
 
     // 3. Generate XAI images if necessary
     ScanResult resultToSave = result;
@@ -69,74 +68,26 @@ class AnalysisResultScreen extends StatelessWidget {
       resultToSave = await ModelService.explain(imageFile);
     }
 
-    // 4. Prepare original image upload
-    saveStage = 'Preparing original image';
+           // 4. Convert the images to text (base64) so they can be saved
+       //    inside the Firestore document (no Firebase Storage needed).
+       saveStage = 'Preparing images';
 
-    final extension = imageFile.path.split('.').last.toLowerCase();
+       final imageUrl =
+           'data:image/jpeg;base64,${base64Encode(await imageFile.readAsBytes())}';
 
-    final safeExtension =
-        ['jpg', 'jpeg', 'png', 'webp'].contains(extension)
-            ? extension
-            : 'jpg';
-
-    final contentType = safeExtension == 'png'
-        ? 'image/png'
-        : safeExtension == 'webp'
-            ? 'image/webp'
-            : 'image/jpeg';
-
-    final originalRef =
-        storage.ref().child('$basePath/original.$safeExtension');
-
-    // 5. Upload original image
-    saveStage = 'Uploading original image';
-
-    await originalRef.putFile(
-      imageFile,
-      SettableMetadata(contentType: contentType),
-    );
-
-    // 6. Get original image URL
-    saveStage = 'Getting original image URL';
-
-    final imageUrl = await originalRef.getDownloadURL();
-
-    // 7. Upload Grad-CAM++ heatmap
-    String? heatmapUrl;
-
-    if (resultToSave.heatmap != null) {
-      saveStage = 'Uploading Grad-CAM image';
-
-      final heatmapRef = storage.ref().child('$basePath/gradcam.png');
-
-      await heatmapRef.putData(
-        resultToSave.heatmap!,
-        SettableMetadata(contentType: 'image/png'),
-      );
-
-      saveStage = 'Getting Grad-CAM image URL';
-
-      heatmapUrl = await heatmapRef.getDownloadURL();
+       // Firestore documents are limited to 1 MB, so the explanation
+       // images are only saved if they are small enough.
+    String? toDataUrl(Uint8List? bytes) {
+      if (bytes == null) return null;
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null) return null;
+      final small =
+          decoded.width > 600 ? img.copyResize(decoded, width: 600) : decoded;
+      return 'data:image/jpeg;base64,${base64Encode(img.encodeJpg(small, quality: 70))}';
     }
 
-    // 8. Upload Region/Contours image
-    String? regionUrl;
-
-    if (resultToSave.region != null) {
-      saveStage = 'Uploading Region image';
-
-      final regionRef = storage.ref().child('$basePath/region.png');
-
-      await regionRef.putData(
-        resultToSave.region!,
-        SettableMetadata(contentType: 'image/png'),
-      );
-
-      saveStage = 'Getting Region image URL';
-
-      regionUrl = await regionRef.getDownloadURL();
-    }
-
+       final heatmapUrl = toDataUrl(resultToSave.heatmap);
+       final regionUrl = toDataUrl(resultToSave.region);
     // 9. Save scan information to Firestore
     saveStage = 'Saving Firestore document';
 
@@ -158,6 +109,14 @@ class AnalysisResultScreen extends StatelessWidget {
       'heatmapUrl': heatmapUrl,
       'regionUrl': regionUrl,
     });
+
+
+    // Keep the counters on the user document up to date.
+    await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+      'totalScans': FieldValue.increment(1),
+      (result.isHealthy ? 'healthyCount' : 'diseasedCount'):
+          FieldValue.increment(1),
+    }, SetOptions(merge: true));
 
     // 10. Navigate to History after successful save.
     if (!context.mounted) return;
@@ -498,20 +457,24 @@ class AnalysisResultScreen extends StatelessWidget {
                       icon: Icons.info_outline,
                     ),
                     const SizedBox(height: 12),
-                    Text(
-                      isHealthy
-                          ? 'The model classified this image as a healthy '
-                              'date palm leaf. Continue monitoring the palm '
-                              'and scan it again if you notice any changes.'
-                          : 'The AI model identified ${result.diseaseName} '
-                              'in the submitted image. Review the palm '
-                              'carefully and seek expert assessment to '
-                              'confirm the diagnosis.',
-                      style: const TextStyle(
-                        color: textGrey,
-                        fontSize: 11,
-                        height: 1.55,
-                      ),
+                                        _DiseaseInfo(
+                      diseaseId: result.diseaseId,
+                      builder: (d) {
+                        final description =
+                            (d['description'] ?? '').toString();
+                        return Text(
+                          description.isNotEmpty
+                              ? description
+                              : isHealthy
+                                  ? 'The model classified this image as a healthy date palm leaf. Continue monitoring the palm and scan it again if you notice any changes.'
+                                  : 'The AI model identified ${result.diseaseName} in the submitted image. Review the palm carefully and seek expert assessment to confirm the diagnosis.',
+                          style: const TextStyle(
+                            color: textGrey,
+                            fontSize: 11,
+                            height: 1.55,
+                          ),
+                        );
+                      },
                     ),
                     const SizedBox(height: 18),
                     const Text(
@@ -584,19 +547,41 @@ class AnalysisResultScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Text(
-                      isHealthy
-                          ? 'No disease was identified by the model in this '
-                              'image. Keep following good agricultural '
-                              'practices and monitor new leaf growth.'
-                          : 'The potential effects depend on the disease '
-                              'and its severity. Monitor affected leaves '
-                              'and other parts of the palm for changes.',
-                      style: const TextStyle(
-                        color: textGrey,
-                        fontSize: 11,
-                        height: 1.55,
-                      ),
+                                        _DiseaseInfo(
+                      diseaseId: result.diseaseId,
+                      builder: (d) {
+                        final symptoms = _diseaseList(d['symptoms']);
+                        if (symptoms.isEmpty) {
+                          return Text(
+                            isHealthy
+                                ? 'No disease was identified by the model in this image. Keep following good agricultural practices and monitor new leaf growth.'
+                                : 'The potential effects depend on the disease and its severity. Monitor affected leaves and other parts of the palm for changes.',
+                            style: const TextStyle(
+                              color: textGrey,
+                              fontSize: 11,
+                              height: 1.55,
+                            ),
+                          );
+                        }
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: symptoms
+                              .map(
+                                (s) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 6),
+                                  child: Text(
+                                    '•  $s',
+                                    style: const TextStyle(
+                                      color: textGrey,
+                                      fontSize: 11,
+                                      height: 1.55,
+                                    ),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -618,26 +603,27 @@ class AnalysisResultScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    _NumberedItem(
-                      number: '1',
-                      text: 'Inspect the palm leaves regularly.',
-                    ),
-                    _NumberedItem(
-                      number: '2',
-                      text: 'Take clear photos of any suspicious areas.',
-                    ),
-                    _NumberedItem(
-                      number: '3',
-                      text: 'Maintain appropriate irrigation and care.',
-                    ),
-                    _NumberedItem(
-                      number: '4',
-                      text: 'Seek agricultural expert advice if symptoms '
-                          'persist or spread.',
-                    ),
-                    _NumberedItem(
-                      number: '5',
-                      text: 'Scan the palm again to monitor changes.',
+                                        _DiseaseInfo(
+                      diseaseId: result.diseaseId,
+                      builder: (d) {
+                        final steps = _diseaseList(d['treatment']);
+                        final items = steps.isNotEmpty
+                            ? steps
+                            : const [
+                                'Inspect the palm leaves regularly.',
+                                'Take clear photos of any suspicious areas.',
+                                'Maintain appropriate irrigation and care.',
+                                'Seek agricultural expert advice if symptoms persist or spread.',
+                                'Scan the palm again to monitor changes.',
+                              ];
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (var i = 0; i < items.length; i++)
+                              _NumberedItem(number: '${i + 1}', text: items[i]),
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 12),
                     Container(
@@ -1008,6 +994,53 @@ class _CircleIconButton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ============================================================
+// DISEASE INFO from Firestore: diseases/{diseaseId}
+// ============================================================
+
+final Map<String, Future<Map<String, dynamic>>> _diseaseCache = {};
+
+Future<Map<String, dynamic>> _loadDisease(String id) {
+  return _diseaseCache.putIfAbsent(id, () async {
+    if (id.isEmpty) return <String, dynamic>{};
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('diseases')
+          .doc(id)
+          .get();
+      return doc.data() ?? <String, dynamic>{};
+    } catch (_) {
+      return <String, dynamic>{};
+    }
+  });
+}
+
+/// Turns a Firestore list into clean items. Also handles lists that were
+/// saved as one long text like "Item A · 1: Item B · 2: Item C".
+List<String> _diseaseList(dynamic value) {
+  final raw =
+      value is List ? value.map((e) => e.toString()) : const <String>[];
+  return raw
+      .expand((s) => s.split('·'))
+      .map((s) => s.replaceFirst(RegExp(r'^\s*\d+\s*:\s*'), '').trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
+}
+
+class _DiseaseInfo extends StatelessWidget {
+  const _DiseaseInfo({required this.diseaseId, required this.builder});
+  final String diseaseId;
+  final Widget Function(Map<String, dynamic> disease) builder;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: _loadDisease(diseaseId),
+      builder: (context, snapshot) => builder(snapshot.data ?? const {}),
     );
   }
 }

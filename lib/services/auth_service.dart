@@ -1,5 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
-
+import 'package:cloud_firestore/cloud_firestore.dart';
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
@@ -74,8 +74,16 @@ class AuthService {
   // Notifies whenever the user's profile changes (name, email, log out)
   Stream<User?> userChanges() => _auth.userChanges();
 
-  Future<void> updateName(String name) async {
-    await _auth.currentUser?.updateDisplayName(name.trim());
+    Future<void> updateName(String name) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    await user.updateDisplayName(name.trim());
+
+    // Also update the name saved in Firestore.
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .set({'fullName': name.trim()}, SetOptions(merge: true));
   }
 
   // Sends a confirmation link to the new email.
@@ -107,8 +115,32 @@ class AuthService {
 
 
   // Permanently deletes the logged-in user's account
-  Future<void> deleteAccount() async {
-    await _auth.currentUser?.delete();
+    Future<void> deleteAccount() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    final userDoc =
+        FirebaseFirestore.instance.collection('users').doc(user.uid);
+
+    // 1. Delete all of the user's scans.
+    final scans = await userDoc.collection('scans').get();
+    for (final d in scans.docs) {
+      await d.reference.delete();
+    }
+
+    // 2. Delete all chats and the messages inside each chat.
+    final chats = await userDoc.collection('chats').get();
+    for (final c in chats.docs) {
+      final messages = await c.reference.collection('messages').get();
+      for (final m in messages.docs) {
+        await m.reference.delete();
+      }
+      await c.reference.delete();
+    }
+
+    // 3. Delete the user document, then the login account itself.
+    await userDoc.delete();
+    await user.delete();
   }
 
   // ============================================================
