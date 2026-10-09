@@ -140,20 +140,7 @@ class SettingsPage extends StatelessWidget {
           ],
         ),
       ),
-      bottomNavigationBar: AppBottomNavigationBar(
-        current: NavTab.settings,
-        onHomeTap: () => Navigator.pop(context),
-        onChatbotTap: () {},
-        onFrameTap: () {
-          // Replace Settings with Scan so pages don't stack up
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute<void>(builder: (_) => const ScanPage()),
-          );
-        },
-        onHistoryTap: () {},
-        onSettingsTap: () {},
-      ),
+      bottomNavigationBar: const AppBottomNavigationBar(current: NavTab.settings),
     );
   }
 }

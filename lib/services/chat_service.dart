@@ -225,7 +225,7 @@ class ChatService {
       final model = FirebaseAI.googleAI().generativeModel(
         model: geminiModel,
         systemInstruction: Content.system(systemPrompt),
-        generationConfig: GenerationConfig(temperature: 0.3, maxOutputTokens: 600),
+        generationConfig: GenerationConfig(temperature: 0.3, maxOutputTokens: 2048),
       );
 
       // previous messages (last 12) so the bot remembers the conversation
@@ -276,7 +276,7 @@ class ChatService {
       'safe palm-care advice and suggest consulting an agricultural specialist.',
       'If the user asks about something unrelated to date palms, politely say you',
       'can only help with date palm health.',
-      'Reply in $lang. Keep answers short (under 120 words) and use bullet points for steps.',
+      'Reply in $lang. Keep answers short (under 120 words). Use plain text only: no Markdown, no ** and no #. For steps, start each line with "• ".',
       'If the user asks how the disease was identified, explain that a hybrid AI model',
       '(EfficientNetV2-S + Swin Transformer) analysed the leaf photo, and the heatmap',
       'shows the areas it focused on.',

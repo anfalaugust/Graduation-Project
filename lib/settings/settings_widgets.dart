@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../scan_page.dart';
 import '../theme/app_colors.dart';
 import '../widgets/app_bottom_nav.dart';
 
@@ -182,22 +181,10 @@ class SettingsSubPageNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final navigator = Navigator.of(context);
-
     return AppBottomNavigationBar(
       current: NavTab.settings,
-      // Go back to Home (the first page)
-      onHomeTap: () => navigator.popUntil((route) => route.isFirst),
-      onChatbotTap: () {},
-      onFrameTap: () {
-        navigator.popUntil((route) => route.isFirst);
-        navigator.push(
-          MaterialPageRoute<void>(builder: (_) => const ScanPage()),
-        );
-      },
-      onHistoryTap: () {},
-      // Go back to the Settings page
-      onSettingsTap: () => navigator.pop(),
+      // In a settings sub-page, the Settings tab goes back to Settings.
+      onSettingsTap: () => Navigator.of(context).pop(),
     );
   }
 }

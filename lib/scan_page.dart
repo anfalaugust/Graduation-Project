@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'services/model_service.dart';
 
-import 'settings/settings_page.dart';
 import 'theme/app_colors.dart';
 import 'widgets/app_bottom_nav.dart';
 
@@ -35,7 +34,11 @@ class _ScanPageState extends State<ScanPage> {
   }
 
     Future<void> _pickImage(ImageSource source) async {
-    final XFile? picked = await _picker.pickImage(source: source);
+           final XFile? picked = await _picker.pickImage(
+         source: source,
+         maxWidth: 600,
+         imageQuality: 70,
+       );
 
     // The user closed the gallery or camera without choosing a photo
     if (picked == null) return;
@@ -223,20 +226,7 @@ class _ScanPageState extends State<ScanPage> {
           ),
         ),
       ),
-      bottomNavigationBar: AppBottomNavigationBar(
-        current: NavTab.scan,
-        onHomeTap: () => Navigator.pop(context),
-        onChatbotTap: () {},
-        onFrameTap: () {},
-        onHistoryTap: () {},
-                onSettingsTap: () {
-          // Replace Scan with Settings so pages don't stack up
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute<void>(builder: (_) => const SettingsPage()),
-          );
-        },
-      ),
+      bottomNavigationBar: const AppBottomNavigationBar(current: NavTab.scan),
     );
   }
 

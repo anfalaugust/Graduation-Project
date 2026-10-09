@@ -162,54 +162,10 @@ class HomeScreen extends StatelessWidget {
                   children: [
                     HeroBanner(
                       height: bannerHeight,
-                      onDiagnoseTap: () => _showDiagnosisPrompt(context),
+                         onDiagnoseTap: () => _openScan(context),
                     ),
                     const SizedBox(height: 26),
-                    const SummaryRow(),
-                    const SizedBox(height: 25),
-                    Row(
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            'Last diagnosis',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.textDark,
-                            ),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: () => _openDiagnosisHistory(context),
-                          style: TextButton.styleFrom(
-                            foregroundColor: AppColors.mutedText,
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Show all',
-                                style: TextStyle(fontSize: 12),
-                              ),
-                              SizedBox(width: 4),
-                              Icon(Icons.arrow_forward, size: 16),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 9),
-                    ...diagnosisCases.map(
-                      (item) => Padding(
-                        padding: const EdgeInsets.only(bottom: 14),
-                        child: DiagnosisCard(
-                          item: item,
-                          onTap: () => showDiagnosisDetails(context, item),
-                        ),
-                      ),
-                    ),
+                    const HomeScansSection(),
                   ],
                 ),
               ),
@@ -217,18 +173,7 @@ class HomeScreen extends StatelessWidget {
           ],
         ),
       ),
-      bottomNavigationBar: AppBottomNavigationBar(
-        current: NavTab.home,
-        onHomeTap: () {},
-        onChatbotTap: () =>  Navigator.of(context).push(
-
-              MaterialPageRoute<void>(builder: (_) => const ChatbotScreen()),
-         ),
-        onFrameTap: () => _openScan(context),
-        onHistoryTap: () => _openDiagnosisHistory(context),
-        onSettingsTap: () =>
-            _showMessage(context, 'Settings are not available yet.'),
-      ),
+      bottomNavigationBar: const AppBottomNavigationBar(current: NavTab.home),
     );
   }
 }
@@ -831,5 +776,279 @@ class ThumbnailPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant ThumbnailPainter oldDelegate) {
     return oldDelegate.kind != kind;
+  }
+}
+
+
+// ============================================================
+// HOME: real data from Firestore (same source as History)
+// ============================================================
+
+class HomeScansSection extends StatefulWidget {
+  const HomeScansSection({super.key});
+
+  @override
+  State<HomeScansSection> createState() => _HomeScansSectionState();
+}
+
+class _HomeScansSectionState extends State<HomeScansSection> {
+  late final Stream<List<ScanRecord>> _stream =
+      HistoryRepository().watchScans();
+
+  String _formatDate(DateTime d) {
+    final now = DateTime.now();
+    final hour = d.hour % 12 == 0 ? 12 : d.hour % 12;
+    final minute = d.minute.toString().padLeft(2, '0');
+    final time = '$hour:$minute ${d.hour < 12 ? 'AM' : 'PM'}';
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(d.year, d.month, d.day);
+    final diff = today.difference(day).inDays;
+    if (diff == 0) return 'Today, $time';
+    if (diff == 1) return 'Yesterday, $time';
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+    return '${d.day} ${months[d.month - 1]}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<ScanRecord>>(
+      stream: _stream,
+      builder: (context, snapshot) {
+        final scans = snapshot.data ?? const <ScanRecord>[];
+        final healthy = scans.where((s) => s.isHealthy).length;
+        final diseased = scans.length - healthy;
+
+        Widget list;
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
+          list = const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        } else if (snapshot.hasError) {
+          list = const Padding(
+            padding: EdgeInsets.all(16),
+            child: Text(
+              'Could not load your scans.',
+              style: TextStyle(color: AppColors.mutedText),
+            ),
+          );
+        } else if (scans.isEmpty) {
+          list = const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: Text(
+                'No scans yet. Tap "Diagnose Now!" to start.',
+                style: TextStyle(color: AppColors.mutedText),
+              ),
+            ),
+          );
+        } else {
+          list = Column(
+            children: scans
+                .take(4)
+                .map(
+                  (r) => Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: _ScanCard(
+                      record: r,
+                      date: _formatDate(r.date),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => ScanDetailsScreen(record: r),
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: SummaryCard(
+                    value: '$diseased',
+                    label: 'Discovered Cases',
+                    valueColor: AppColors.orange,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: SummaryCard(
+                    value: '$healthy',
+                    label: 'Healthy palms',
+                    valueColor: AppColors.leafGreen,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: SummaryCard(
+                    value: '${scans.length}',
+                    label: 'Total diagnosis',
+                    valueColor: AppColors.forest,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 25),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Last diagnosis',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textDark,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const HistoryScreen(),
+                    ),
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.mutedText,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Show all', style: TextStyle(fontSize: 12)),
+                      SizedBox(width: 4),
+                      Icon(Icons.arrow_forward, size: 16),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 9),
+            list,
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ScanCard extends StatelessWidget {
+  const _ScanCard({
+    required this.record,
+    required this.date,
+    required this.onTap,
+  });
+
+  final ScanRecord record;
+  final String date;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = record.isHealthy ? AppColors.leafGreen : AppColors.orange;
+    final percent = record.confidence.round().clamp(0, 100);
+
+    return Material(
+      color: AppColors.card,
+      borderRadius: BorderRadius.circular(12),
+      elevation: 2,
+      shadowColor: const Color(0x22000000),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          height: 72,
+          child: Padding(
+            padding: const EdgeInsets.all(9),
+            child: Row(
+              children: [
+                ScanImage(
+                  url: record.imageUrl,
+                  isHealthy: record.isHealthy,
+                  width: 53,
+                  height: 53,
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              record.title,
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                              style: const TextStyle(
+                                color: Color(0xFF202220),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 7),
+                          StatusTag(
+                            label: record.isHealthy ? 'Healthy' : 'Diseased',
+                            isHealthy: record.isHealthy,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          date,
+                          style: const TextStyle(
+                            color: AppColors.mutedText,
+                            fontSize: 9,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(4),
+                              child: LinearProgressIndicator(
+                                value: percent / 100,
+                                minHeight: 4,
+                                backgroundColor: AppColors.line,
+                                valueColor:
+                                    AlwaysStoppedAnimation<Color>(color),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            '$percent%',
+                            style: const TextStyle(
+                              color: Color(0xFF292B29),
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

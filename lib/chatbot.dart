@@ -83,8 +83,8 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
         userText: text,
         diseaseId: widget.diseaseId,
         confidence: widget.confidence,
-        language: 'en', // Use 'ar' for Arabic replies.
-      ).timeout(const Duration(seconds: 45));
+        language: RegExp(r'[\u0600-\u06FF]').hasMatch(text) ? 'ar' : 'en',
+         ).timeout(const Duration(seconds: 90));
     } catch (e) {
       debugPrint('send failed: $e');
       if (mounted) {
@@ -397,20 +397,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
         // take space from the text field.
         bottomNavigationBar: keyboardOpen
             ? null
-            : AppBottomNavigationBar(
-                current: NavTab.chatbot,
-                onHomeTap: () =>
-                    Navigator.of(context).popUntil((r) => r.isFirst),
-                onChatbotTap: () {},
-                onFrameTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(builder: (_) => const ScanPage()),
-                ),
-                onHistoryTap: () => Navigator.of(context).pushReplacement(
-                  MaterialPageRoute<void>(
-                      builder: (_) => const HistoryScreen()),
-                ),
-                onSettingsTap: () {},
-              ),
+            : const AppBottomNavigationBar(current: NavTab.chatbot),
       ),
     );
   }

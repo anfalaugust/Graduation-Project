@@ -1,12 +1,13 @@
 import 'dart:io';
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:image/image.dart' as img;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'chatbot.dart';
 import 'scan_page.dart';
 import 'services/model_service.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'History.dart';
 
 class AnalysisResultScreen extends StatelessWidget {
@@ -56,8 +57,6 @@ class AnalysisResultScreen extends StatelessWidget {
 
     final scanDoc = scans.doc();
 
-    final storage = FirebaseStorage.instance;
-    final basePath = 'users/${user.uid}/scans/${scanDoc.id}';
 
     // 3. Generate XAI images if necessary
     ScanResult resultToSave = result;
@@ -69,74 +68,26 @@ class AnalysisResultScreen extends StatelessWidget {
       resultToSave = await ModelService.explain(imageFile);
     }
 
-    // 4. Prepare original image upload
-    saveStage = 'Preparing original image';
+           // 4. Convert the images to text (base64) so they can be saved
+       //    inside the Firestore document (no Firebase Storage needed).
+       saveStage = 'Preparing images';
 
-    final extension = imageFile.path.split('.').last.toLowerCase();
+       final imageUrl =
+           'data:image/jpeg;base64,${base64Encode(await imageFile.readAsBytes())}';
 
-    final safeExtension =
-        ['jpg', 'jpeg', 'png', 'webp'].contains(extension)
-            ? extension
-            : 'jpg';
-
-    final contentType = safeExtension == 'png'
-        ? 'image/png'
-        : safeExtension == 'webp'
-            ? 'image/webp'
-            : 'image/jpeg';
-
-    final originalRef =
-        storage.ref().child('$basePath/original.$safeExtension');
-
-    // 5. Upload original image
-    saveStage = 'Uploading original image';
-
-    await originalRef.putFile(
-      imageFile,
-      SettableMetadata(contentType: contentType),
-    );
-
-    // 6. Get original image URL
-    saveStage = 'Getting original image URL';
-
-    final imageUrl = await originalRef.getDownloadURL();
-
-    // 7. Upload Grad-CAM++ heatmap
-    String? heatmapUrl;
-
-    if (resultToSave.heatmap != null) {
-      saveStage = 'Uploading Grad-CAM image';
-
-      final heatmapRef = storage.ref().child('$basePath/gradcam.png');
-
-      await heatmapRef.putData(
-        resultToSave.heatmap!,
-        SettableMetadata(contentType: 'image/png'),
-      );
-
-      saveStage = 'Getting Grad-CAM image URL';
-
-      heatmapUrl = await heatmapRef.getDownloadURL();
+       // Firestore documents are limited to 1 MB, so the explanation
+       // images are only saved if they are small enough.
+    String? toDataUrl(Uint8List? bytes) {
+      if (bytes == null) return null;
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null) return null;
+      final small =
+          decoded.width > 600 ? img.copyResize(decoded, width: 600) : decoded;
+      return 'data:image/jpeg;base64,${base64Encode(img.encodeJpg(small, quality: 70))}';
     }
 
-    // 8. Upload Region/Contours image
-    String? regionUrl;
-
-    if (resultToSave.region != null) {
-      saveStage = 'Uploading Region image';
-
-      final regionRef = storage.ref().child('$basePath/region.png');
-
-      await regionRef.putData(
-        resultToSave.region!,
-        SettableMetadata(contentType: 'image/png'),
-      );
-
-      saveStage = 'Getting Region image URL';
-
-      regionUrl = await regionRef.getDownloadURL();
-    }
-
+       final heatmapUrl = toDataUrl(resultToSave.heatmap);
+       final regionUrl = toDataUrl(resultToSave.region);
     // 9. Save scan information to Firestore
     saveStage = 'Saving Firestore document';
 

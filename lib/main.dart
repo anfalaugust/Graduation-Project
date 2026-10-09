@@ -375,11 +375,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (!mounted) return;
 
-      Navigator.push(
+            Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
           builder: (context) => const HomeScreen(),
         ),
+        (route) => false,
       );
     } catch (e) {
       if (!mounted) return;
