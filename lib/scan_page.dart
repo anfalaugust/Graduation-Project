@@ -8,6 +8,8 @@ import 'settings/settings_page.dart';
 import 'theme/app_colors.dart';
 import 'widgets/app_bottom_nav.dart';
 
+import 'analysis_result_screen.dart';
+
 class ScanPage extends StatefulWidget {
   const ScanPage({super.key});
 
@@ -238,27 +240,46 @@ class _ScanPageState extends State<ScanPage> {
     );
   }
 
-    Future<void> _analyzeImage() async {
-    final image = _selectedImage;
-    if (image == null) return;
+    
+Future<void> _analyzeImage() async {
+  final image = _selectedImage;
+  if (image == null || _isAnalyzing) return;
 
-    setState(() => _isAnalyzing = true);
+  setState(() => _isAnalyzing = true);
 
-    try {
-      final result = await ModelService.predict(image);
-      debugPrint('Result: ${result.diseaseName} (${result.confidenceText})');
-      if (!mounted) return;
-      // Temporary message until the result page is connected
-      _showMessage('${result.diseaseName} - ${result.confidenceText}');
-    } catch (e) {
-      // Shows the real error in the Debug Console
-      debugPrint('Analyze failed: $e');
-      if (!mounted) return;
-      _showMessage('Could not analyze the photo. Please try again.');
-    } finally {
-      if (mounted) setState(() => _isAnalyzing = false);
+  try {
+    // Get the real prediction from the existing model.
+    final result = await ModelService.explain(
+  image,
+  method: XaiMethod.gradcamPP,
+);
+
+    if (!mounted) return;
+
+    // Open the result screen with the selected image and prediction.
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => AnalysisResultScreen(
+          imageFile: image,
+          result: result,
+        ),
+      ),
+    );
+  } catch (e) {
+    debugPrint('Analyze failed: $e');
+
+    if (!mounted) return;
+
+    _showMessage(
+      'Could not analyze the photo. Please try again.',
+    );
+  } finally {
+    if (mounted) {
+      setState(() => _isAnalyzing = false);
     }
   }
+}
 
   void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(

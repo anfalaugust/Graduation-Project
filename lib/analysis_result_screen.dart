@@ -1,7 +1,23 @@
+import 'dart:io';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'chatbot.dart';
+import 'scan_page.dart';
+import 'services/model_service.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'History.dart';
 
 class AnalysisResultScreen extends StatelessWidget {
-  const AnalysisResultScreen({super.key});
+  final File imageFile;
+  final ScanResult result;
+
+  const AnalysisResultScreen({
+    super.key,
+    required this.imageFile,
+    required this.result,
+  });
 
   static const Color primaryGreen = Color(0xFF1F6B45);
   static const Color darkGreen = Color(0xFF17372A);
@@ -9,8 +25,192 @@ class AnalysisResultScreen extends StatelessWidget {
   static const Color lightGreen = Color(0xFFEAF2E9);
   static const Color textGrey = Color(0xFF66756D);
 
+  // Save scan to Firebase Storage and Firestore
+  Future<void> _saveScan(BuildContext context) async {
+  final messenger = ScaffoldMessenger.of(context);
+  String saveStage = 'Starting save';
+
+  try {
+    // 1. Check authentication
+    saveStage = 'Checking user authentication';
+
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      throw Exception('Please log in before saving a scan.');
+    }
+
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Saving scan and uploading images...'),
+      ),
+    );
+
+    // 2. Prepare Firestore document
+    saveStage = 'Preparing Firestore document';
+
+    final scans = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .collection('scans');
+
+    final scanDoc = scans.doc();
+
+    final storage = FirebaseStorage.instance;
+    final basePath = 'users/${user.uid}/scans/${scanDoc.id}';
+
+    // 3. Generate XAI images if necessary
+    ScanResult resultToSave = result;
+
+    if (!result.isHealthy &&
+        (result.heatmap == null || result.region == null)) {
+      saveStage = 'Generating explanation images';
+
+      resultToSave = await ModelService.explain(imageFile);
+    }
+
+    // 4. Prepare original image upload
+    saveStage = 'Preparing original image';
+
+    final extension = imageFile.path.split('.').last.toLowerCase();
+
+    final safeExtension =
+        ['jpg', 'jpeg', 'png', 'webp'].contains(extension)
+            ? extension
+            : 'jpg';
+
+    final contentType = safeExtension == 'png'
+        ? 'image/png'
+        : safeExtension == 'webp'
+            ? 'image/webp'
+            : 'image/jpeg';
+
+    final originalRef =
+        storage.ref().child('$basePath/original.$safeExtension');
+
+    // 5. Upload original image
+    saveStage = 'Uploading original image';
+
+    await originalRef.putFile(
+      imageFile,
+      SettableMetadata(contentType: contentType),
+    );
+
+    // 6. Get original image URL
+    saveStage = 'Getting original image URL';
+
+    final imageUrl = await originalRef.getDownloadURL();
+
+    // 7. Upload Grad-CAM++ heatmap
+    String? heatmapUrl;
+
+    if (resultToSave.heatmap != null) {
+      saveStage = 'Uploading Grad-CAM image';
+
+      final heatmapRef = storage.ref().child('$basePath/gradcam.png');
+
+      await heatmapRef.putData(
+        resultToSave.heatmap!,
+        SettableMetadata(contentType: 'image/png'),
+      );
+
+      saveStage = 'Getting Grad-CAM image URL';
+
+      heatmapUrl = await heatmapRef.getDownloadURL();
+    }
+
+    // 8. Upload Region/Contours image
+    String? regionUrl;
+
+    if (resultToSave.region != null) {
+      saveStage = 'Uploading Region image';
+
+      final regionRef = storage.ref().child('$basePath/region.png');
+
+      await regionRef.putData(
+        resultToSave.region!,
+        SettableMetadata(contentType: 'image/png'),
+      );
+
+      saveStage = 'Getting Region image URL';
+
+      regionUrl = await regionRef.getDownloadURL();
+    }
+
+    // 9. Save scan information to Firestore
+    saveStage = 'Saving Firestore document';
+
+    await scanDoc.set({
+      // Required by the current Firestore security rules.
+      'label': result.diseaseName,
+      'confidence': result.confidence,
+      'isHealthy': result.isHealthy,
+      'createdAt': FieldValue.serverTimestamp(),
+
+      // Fields used by History.dart.
+      'diseaseId': result.diseaseId,
+      'diseaseName': result.diseaseName,
+      'status': result.isHealthy ? 'healthy' : 'diseased',
+      'predictions': result.toFirestore()['predictions'],
+
+      // Uploaded image URLs.
+      'imageUrl': imageUrl,
+      'heatmapUrl': heatmapUrl,
+      'regionUrl': regionUrl,
+    });
+
+    // 10. Navigate to History after successful save.
+    if (!context.mounted) return;
+
+    messenger.hideCurrentSnackBar();
+
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => const HistoryScreen(),
+      ),
+    );
+  } on FirebaseException catch (e) {
+    debugPrint('Failed stage: $saveStage');
+    debugPrint('Firebase error code: ${e.code}');
+    debugPrint('Firebase error message: ${e.message}');
+
+    if (!context.mounted) return;
+
+    messenger.hideCurrentSnackBar();
+
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 8),
+        content: Text(
+          'Failed at: $saveStage\n'
+          'Firebase error (${e.code}): ${e.message ?? "Unknown error"}',
+        ),
+      ),
+    );
+  } catch (e, stackTrace) {
+    debugPrint('Failed stage: $saveStage');
+    debugPrint('Save error: $e');
+    debugPrintStack(stackTrace: stackTrace);
+
+    if (!context.mounted) return;
+
+    messenger.hideCurrentSnackBar();
+
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 8),
+        content: Text(
+          'Failed at: $saveStage\nError: $e',
+        ),
+      ),
+    );
+  }
+}
+
   @override
   Widget build(BuildContext context) {
+    final isHealthy = result.isHealthy;
+
     return Scaffold(
       backgroundColor: backgroundColor,
       body: SafeArea(
@@ -19,16 +219,12 @@ class AnalysisResultScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // =========================================================
               // TOP BAR
-              // =========================================================
               Row(
                 children: [
                   _CircleIconButton(
                     icon: Icons.arrow_back_ios_new,
-                    onTap: () {
-                      Navigator.pop(context);
-                    },
+                    onTap: () => Navigator.pop(context),
                   ),
                   const SizedBox(width: 12),
                   const Expanded(
@@ -41,18 +237,12 @@ class AnalysisResultScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  _CircleIconButton(
-                    icon: Icons.share_outlined,
-                    onTap: () {},
-                  ),
                 ],
               ),
 
               const SizedBox(height: 16),
 
-              // =========================================================
               // ANALYZED IMAGE
-              // =========================================================
               Container(
                 height: 172,
                 width: double.infinity,
@@ -64,30 +254,20 @@ class AnalysisResultScreen extends StatelessWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    // Temporary image/design placeholder.
-                    // Later we will replace this with the image
-                    // captured from the Camera page.
-                    Container(
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            Color(0xFFBFC9B4),
-                            Color(0xFFE7E8D7),
-                            Color(0xFF9DA786),
-                          ],
-                        ),
+                    if (result.heatmap != null)
+                      Image.memory(
+                        result.heatmap!,
+                        width: double.infinity,
+                        height: double.infinity,
+                        fit: BoxFit.cover,
+                      )
+                    else
+                      Image.file(
+                        imageFile,
+                        width: double.infinity,
+                        height: double.infinity,
+                        fit: BoxFit.cover,
                       ),
-                      child: const Center(
-                        child: Icon(
-                          Icons.eco_outlined,
-                          size: 80,
-                          color: Color(0xFF65735E),
-                        ),
-                      ),
-                    ),
-
                     Positioned(
                       left: 12,
                       bottom: 12,
@@ -127,9 +307,7 @@ class AnalysisResultScreen extends StatelessWidget {
 
               const SizedBox(height: 12),
 
-              // =========================================================
               // PREDICTION CARD
-              // =========================================================
               _WhiteCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -140,49 +318,52 @@ class AnalysisResultScreen extends StatelessWidget {
                           width: 38,
                           height: 38,
                           decoration: BoxDecoration(
-                            color: const Color(0xFFFFF0DC),
+                            color: isHealthy
+                                ? const Color(0xFFE4F2E5)
+                                : const Color(0xFFFFF0DC),
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Icon(
-                            Icons.priority_high_rounded,
-                            color: Color(0xFFF18B20),
+                          child: Icon(
+                            isHealthy
+                                ? Icons.check_circle_outline
+                                : Icons.priority_high_rounded,
+                            color: isHealthy
+                                ? primaryGreen
+                                : const Color(0xFFF18B20),
                             size: 22,
                           ),
                         ),
                         const SizedBox(width: 12),
-                        const Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'PREDICTION',
-                              style: TextStyle(
-                                color: textGrey,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 1.2,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'PREDICTION',
+                                style: TextStyle(
+                                  color: textGrey,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 1.2,
+                                ),
                               ),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              'Graphiola Leaf Spot',
-                              style: TextStyle(
-                                color: darkGreen,
-                                fontSize: 17,
-                                fontWeight: FontWeight.w700,
+                              const SizedBox(height: 4),
+                              Text(
+                                result.diseaseName,
+                                style: const TextStyle(
+                                  color: darkGreen,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ],
                     ),
 
                     const SizedBox(height: 16),
-
-                    Divider(
-                      color: Colors.grey.shade200,
-                      height: 1,
-                    ),
-
+                    Divider(color: Colors.grey.shade200, height: 1),
                     const SizedBox(height: 16),
 
                     Row(
@@ -202,9 +383,9 @@ class AnalysisResultScreen extends StatelessWidget {
                                 ),
                               ),
                               const SizedBox(height: 5),
-                              const Text(
-                                '94.7%',
-                                style: TextStyle(
+                              Text(
+                                result.confidenceText,
+                                style: const TextStyle(
                                   color: darkGreen,
                                   fontSize: 21,
                                   fontWeight: FontWeight.w700,
@@ -227,13 +408,17 @@ class AnalysisResultScreen extends StatelessWidget {
                                   vertical: 5,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFFFEDD8),
+                                  color: isHealthy
+                                      ? const Color(0xFFE4F2E5)
+                                      : const Color(0xFFFFEDD8),
                                   borderRadius: BorderRadius.circular(20),
                                 ),
-                                child: const Text(
-                                  'Moderate',
+                                child: Text(
+                                  isHealthy ? 'Healthy' : 'Needs assessment',
                                   style: TextStyle(
-                                    color: Color(0xFFD87518),
+                                    color: isHealthy
+                                        ? primaryGreen
+                                        : const Color(0xFFD87518),
                                     fontSize: 10,
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -242,17 +427,16 @@ class AnalysisResultScreen extends StatelessWidget {
                             ],
                           ),
                         ),
-
-                        _ConfidenceCircle(),
-
+                        _ConfidenceCircle(
+                          confidence: result.confidence,
+                        ),
                         const SizedBox(width: 14),
-
-                        Expanded(
+                        const Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const SizedBox(height: 49),
-                              const Text(
+                              SizedBox(height: 49),
+                              Text(
                                 'PALM',
                                 style: TextStyle(
                                   color: textGrey,
@@ -261,9 +445,9 @@ class AnalysisResultScreen extends StatelessWidget {
                                   letterSpacing: 1.1,
                                 ),
                               ),
-                              const SizedBox(height: 5),
-                              const Text(
-                                'Palm #02',
+                              SizedBox(height: 5),
+                              Text(
+                                'New scan',
                                 style: TextStyle(
                                   color: darkGreen,
                                   fontSize: 11,
@@ -275,71 +459,118 @@ class AnalysisResultScreen extends StatelessWidget {
                         ),
                       ],
                     ),
+
+                    if (result.lowConfidence) ...[
+                      const SizedBox(height: 14),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF4DD),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Text(
+                          'The model has low confidence in this prediction. '
+                          'Try taking a clearer photo with better lighting.',
+                          style: TextStyle(
+                            color: Color(0xFF8A5A14),
+                            fontSize: 11,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
 
               const SizedBox(height: 12),
 
-              // =========================================================
-              // ABOUT THIS DISEASE
-              // =========================================================
+              // ABOUT THIS RESULT
               _WhiteCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _SectionTitle(
-                      title: 'About this disease',
+                      title: isHealthy
+                          ? 'About this result'
+                          : 'About this disease',
                       icon: Icons.info_outline,
                     ),
-
                     const SizedBox(height: 12),
-
-                    const Text(
-                      'Graphiola Leaf Spot is a fungal disease that can '
-                      'affect date palm leaves. Early monitoring helps '
-                      'prevent damage from spreading.',
-                      style: TextStyle(
+                    Text(
+                      isHealthy
+                          ? 'The model classified this image as a healthy '
+                              'date palm leaf. Continue monitoring the palm '
+                              'and scan it again if you notice any changes.'
+                          : 'The AI model identified ${result.diseaseName} '
+                              'in the submitted image. Review the palm '
+                              'carefully and seek expert assessment to '
+                              'confirm the diagnosis.',
+                      style: const TextStyle(
                         color: textGrey,
                         fontSize: 11,
                         height: 1.55,
                       ),
                     ),
-
                     const SizedBox(height: 18),
-
                     const Text(
-                      'Common symptoms',
+                      'Model predictions',
                       style: TextStyle(
                         color: darkGreen,
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-
                     const SizedBox(height: 8),
-
-                    _CheckItem(
-                      text: 'Brown or black spots on leaves',
-                    ),
-                    _CheckItem(
-                      text: 'Yellowing or discoloration',
-                    ),
-                    _CheckItem(
-                      text: 'Visible lesions',
-                    ),
-                    _CheckItem(
-                      text: 'Reduced leaf health',
-                    ),
+                    if (result.predictions.isEmpty)
+                      const Text(
+                        'No additional predictions available.',
+                        style: TextStyle(
+                          color: textGrey,
+                          fontSize: 11,
+                        ),
+                      )
+                    else
+                      ...result.predictions.take(3).map(
+                        (prediction) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.check,
+                                color: primaryGreen,
+                                size: 15,
+                              ),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                child: Text(
+                                  prediction.name,
+                                  style: const TextStyle(
+                                    color: textGrey,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                prediction.scoreText,
+                                style: const TextStyle(
+                                  color: darkGreen,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
 
               const SizedBox(height: 12),
 
-              // =========================================================
               // EFFECTS ON YOUR PALM
-              // =========================================================
               _WhiteCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -352,14 +583,16 @@ class AnalysisResultScreen extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-
                     const SizedBox(height: 12),
-
-                    const Text(
-                      'If symptoms progress, affected leaves may lose '
-                      'vitality and photosynthetic activity. Severe damage '
-                      'can impact overall palm productivity.',
-                      style: TextStyle(
+                    Text(
+                      isHealthy
+                          ? 'No disease was identified by the model in this '
+                              'image. Keep following good agricultural '
+                              'practices and monitor new leaf growth.'
+                          : 'The potential effects depend on the disease '
+                              'and its severity. Monitor affected leaves '
+                              'and other parts of the palm for changes.',
+                      style: const TextStyle(
                         color: textGrey,
                         fontSize: 11,
                         height: 1.55,
@@ -371,9 +604,7 @@ class AnalysisResultScreen extends StatelessWidget {
 
               const SizedBox(height: 12),
 
-              // =========================================================
               // RECOMMENDED TREATMENT
-              // =========================================================
               _WhiteCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -386,37 +617,29 @@ class AnalysisResultScreen extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-
                     const SizedBox(height: 14),
-
                     _NumberedItem(
                       number: '1',
-                      text: 'Inspect affected leaves regularly',
+                      text: 'Inspect the palm leaves regularly.',
                     ),
-
                     _NumberedItem(
                       number: '2',
-                      text:
-                          'Remove severely affected material when appropriate',
+                      text: 'Take clear photos of any suspicious areas.',
                     ),
-
                     _NumberedItem(
                       number: '3',
-                      text: 'Maintain appropriate irrigation',
+                      text: 'Maintain appropriate irrigation and care.',
                     ),
-
                     _NumberedItem(
                       number: '4',
-                      text: 'Keep the surrounding area clean',
+                      text: 'Seek agricultural expert advice if symptoms '
+                          'persist or spread.',
                     ),
-
                     _NumberedItem(
                       number: '5',
-                      text: 'Monitor for spreading symptoms',
+                      text: 'Scan the palm again to monitor changes.',
                     ),
-
                     const SizedBox(height: 12),
-
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(
@@ -438,7 +661,8 @@ class AnalysisResultScreen extends StatelessWidget {
                           SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Recommended next step: scan this palm again in 7 days.',
+                              'Recommended next step: monitor this palm '
+                              'and scan it again if its condition changes.',
                               style: TextStyle(
                                 color: primaryGreen,
                                 fontSize: 10,
@@ -456,24 +680,23 @@ class AnalysisResultScreen extends StatelessWidget {
 
               const SizedBox(height: 12),
 
-              // =========================================================
               // DISCLAIMER
-              // =========================================================
-              Row(
+              const Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.shield_outlined,
                     color: Color(0xFF9AA69E),
                     size: 14,
                   ),
-                  const SizedBox(width: 6),
+                  SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      'AI predictions are intended for preliminary assessment '
-                      'and should not replace professional agricultural diagnosis.',
+                      'AI predictions are intended for preliminary '
+                      'assessment and should not replace professional '
+                      'agricultural diagnosis.',
                       style: TextStyle(
-                        color: Colors.grey.shade500,
+                        color: textGrey,
                         fontSize: 9,
                         height: 1.4,
                       ),
@@ -484,14 +707,12 @@ class AnalysisResultScreen extends StatelessWidget {
 
               const SizedBox(height: 16),
 
-              // =========================================================
               // SAVE TO MY PALM
-              // =========================================================
               SizedBox(
                 width: double.infinity,
                 height: 52,
                 child: ElevatedButton.icon(
-                  onPressed: () {},
+                  onPressed: () => _saveScan(context),
                   icon: const Icon(
                     Icons.bookmark_border_rounded,
                     color: Colors.white,
@@ -517,14 +738,22 @@ class AnalysisResultScreen extends StatelessWidget {
 
               const SizedBox(height: 10),
 
-              // =========================================================
               // ASK AI
-              // =========================================================
               SizedBox(
                 width: double.infinity,
                 height: 52,
                 child: OutlinedButton.icon(
-                  onPressed: () {},
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => ChatbotScreen(
+                          diseaseId: result.diseaseId,
+                          confidence: result.confidence,
+                        ),
+                      ),
+                    );
+                  },
                   icon: const Icon(
                     Icons.chat_bubble_outline_rounded,
                     color: primaryGreen,
@@ -540,9 +769,7 @@ class AnalysisResultScreen extends StatelessWidget {
                   ),
                   style: OutlinedButton.styleFrom(
                     backgroundColor: Colors.white,
-                    side: BorderSide(
-                      color: Colors.grey.shade200,
-                    ),
+                    side: BorderSide(color: Colors.grey.shade200),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -552,15 +779,18 @@ class AnalysisResultScreen extends StatelessWidget {
 
               const SizedBox(height: 10),
 
-              // =========================================================
               // SCAN AGAIN
-              // =========================================================
               SizedBox(
                 width: double.infinity,
                 height: 52,
                 child: OutlinedButton.icon(
                   onPressed: () {
-                    Navigator.pop(context);
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => const ScanPage(),
+                      ),
+                    );
                   },
                   icon: const Icon(
                     Icons.camera_alt_outlined,
@@ -577,9 +807,7 @@ class AnalysisResultScreen extends StatelessWidget {
                   ),
                   style: OutlinedButton.styleFrom(
                     backgroundColor: Colors.white,
-                    side: BorderSide(
-                      color: Colors.grey.shade200,
-                    ),
+                    side: BorderSide(color: Colors.grey.shade200),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -594,16 +822,11 @@ class AnalysisResultScreen extends StatelessWidget {
   }
 }
 
-// ===========================================================================
 // WHITE CARD
-// ===========================================================================
-
 class _WhiteCard extends StatelessWidget {
   final Widget child;
 
-  const _WhiteCard({
-    required this.child,
-  });
+  const _WhiteCard({required this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -622,10 +845,7 @@ class _WhiteCard extends StatelessWidget {
   }
 }
 
-// ===========================================================================
 // SECTION TITLE
-// ===========================================================================
-
 class _SectionTitle extends StatelessWidget {
   final String title;
   final IconData icon;
@@ -659,50 +879,7 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
-// ===========================================================================
-// CHECK ITEM
-// ===========================================================================
-
-class _CheckItem extends StatelessWidget {
-  final String text;
-
-  const _CheckItem({
-    required this.text,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 7),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(
-            Icons.check,
-            color: AnalysisResultScreen.primaryGreen,
-            size: 15,
-          ),
-          const SizedBox(width: 7),
-          Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(
-                color: AnalysisResultScreen.textGrey,
-                fontSize: 10,
-                height: 1.4,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ===========================================================================
 // NUMBERED ITEM
-// ===========================================================================
-
 class _NumberedItem extends StatelessWidget {
   final String number;
   final String text;
@@ -753,13 +930,18 @@ class _NumberedItem extends StatelessWidget {
   }
 }
 
-// ===========================================================================
 // CONFIDENCE CIRCLE
-// ===========================================================================
-
 class _ConfidenceCircle extends StatelessWidget {
+  final double confidence;
+
+  const _ConfidenceCircle({
+    required this.confidence,
+  });
+
   @override
   Widget build(BuildContext context) {
+    final value = confidence.clamp(0.0, 1.0);
+
     return SizedBox(
       width: 58,
       height: 58,
@@ -770,7 +952,7 @@ class _ConfidenceCircle extends StatelessWidget {
             width: 54,
             height: 54,
             child: CircularProgressIndicator(
-              value: 0.95,
+              value: value,
               strokeWidth: 5,
               backgroundColor: const Color(0xFFDDEBE0),
               valueColor: const AlwaysStoppedAnimation<Color>(
@@ -778,9 +960,9 @@ class _ConfidenceCircle extends StatelessWidget {
               ),
             ),
           ),
-          const Text(
-            '95%',
-            style: TextStyle(
+          Text(
+            '${(value * 100).round()}%',
+            style: const TextStyle(
               color: AnalysisResultScreen.primaryGreen,
               fontSize: 11,
               fontWeight: FontWeight.w700,
@@ -792,10 +974,7 @@ class _ConfidenceCircle extends StatelessWidget {
   }
 }
 
-// ===========================================================================
 // CIRCLE ICON BUTTON
-// ===========================================================================
-
 class _CircleIconButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
