@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'services/chat_service.dart';
 import 'theme/app_colors.dart';
 import 'widgets/app_bottom_nav.dart';
@@ -339,7 +339,88 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
       ),
     );
   }
-
+  // Shows the user's previous chats; tapping one reopens it.
+  void _openPreviousChats() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.6,
+            child: Column(
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    'Previous chats',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Expanded(
+                  child: StreamBuilder<List<Map<String, dynamic>>>(
+                    stream: ChatService.chatsStream(),
+                    builder: (ctx, snapshot) {
+                      if (!snapshot.hasData) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      final chats = snapshot.data!;
+                      if (chats.isEmpty) {
+                        return const Center(
+                          child: Text(
+                            'No previous chats yet.',
+                            style: TextStyle(color: AppColors.mutedText),
+                          ),
+                        );
+                      }
+                      return ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        itemCount: chats.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (ctx, i) {
+                          final c = chats[i];
+                          final id = c['id'] as String;
+                          final disease = (c['diseaseId'] ?? '').toString();
+                          final date =
+                              (c['lastMessageAt'] as Timestamp?)?.toDate();
+                          return ListTile(
+                            leading: const Icon(Icons.chat_bubble_outline,
+                                color: AppColors.forest),
+                            title: Text(
+                              (c['title'] ?? 'Chat').toString(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: date == null
+                                ? null
+                                : Text('${date.day}/${date.month}/${date.year}'),
+                            selected: id == _activeChatId,
+                            onTap: () {
+                              Navigator.pop(sheetContext);
+                              if (id == _activeChatId) return;
+                              Navigator.of(context).pushReplacement(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => ChatbotScreen(
+                                    chatId: id,
+                                    diseaseId: disease.isEmpty ? null : disease,
+                                  ),
+                                ),
+                              );
+                            },
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
   @override
   Widget build(BuildContext context) {
     final keyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
@@ -359,7 +440,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                     _circleButton(Icons.chevron_left, () {
                       Navigator.maybePop(context);
                     }),
-                    _circleButton(Icons.more_vert, () {}),
+                    _circleButton(Icons.more_vert, _openPreviousChats),
                   ],
                 ),
               ),
