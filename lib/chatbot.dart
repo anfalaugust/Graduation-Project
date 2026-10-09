@@ -3,8 +3,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'services/chat_service.dart';
 import 'theme/app_colors.dart';
 import 'widgets/app_bottom_nav.dart';
-import 'History.dart';
-import 'scan_page.dart';
 
 class ChatbotScreen extends StatefulWidget {
   final String? chatId;

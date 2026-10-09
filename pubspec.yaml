@@ -41,7 +41,6 @@ dependencies:
   http: ^1.6.0
   firebase_ai: ^4.0.0
   image_picker: ^1.2.4
-  firebase_storage: ^13.6.0
   image: ^4.10.1
 
 dev_dependencies:

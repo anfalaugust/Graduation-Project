@@ -4,10 +4,8 @@ import 'package:firebase_core/firebase_core.dart';
 
 import 'create_account.dart';
 import 'forgot_password.dart';
-import 'analysis_result_screen.dart';
 import 'services/auth_service.dart';
 import 'firebase_options.dart';
-import 'widgets/app_bottom_nav.dart';
 import 'home_page.dart';
 
 void main() async {

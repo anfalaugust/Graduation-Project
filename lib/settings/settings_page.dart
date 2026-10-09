@@ -2,7 +2,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../main.dart' show LoginScreen;
-import '../scan_page.dart';
 import '../services/auth_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/app_bottom_nav.dart';
