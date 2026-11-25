@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart'; 
 import 'package:flutter/gestures.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'create_account.dart';
@@ -15,6 +17,14 @@ void main() async {
 
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
+  );
+
+
+  // App Check: Gemini only answers apps that pass this check.
+  // Debug mode uses a test token; the release app uses Play Integrity.
+  await FirebaseAppCheck.instance.activate(
+    androidProvider:
+        kDebugMode ? AndroidProvider.debug : AndroidProvider.playIntegrity,
   );
 
   runApp(const SaafApp());

@@ -43,6 +43,7 @@ dependencies:
   image_picker: ^1.2.4
   image: ^4.10.1
   google_fonts: ^9.0.0
+  firebase_app_check: ^0.4.9
 
 dev_dependencies:
   flutter_test:
